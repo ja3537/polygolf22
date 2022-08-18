@@ -15,6 +15,15 @@ class GolfMap:
         self.map_filepath = map_filepath
         self.start = sympy.geometry.Point2D(*json_obj["start"])
         self.target = sympy.geometry.Point2D(*json_obj["target"])
+        print("map")
+        print(*json_obj["map"])
         self.golf_map = sympy.Polygon(*json_obj["map"])
+        sand_traps = list(json_obj["sand traps"])
+        self.sand_traps = []
+        print(sand_traps)
+        print(sand_traps[0])
+        for s in sand_traps:
+            trap = sympy.Polygon(*s)
+            self.sand_traps.append(trap)
         assert self.golf_map.encloses(self.start), "Start point doesn't lie inside map polygon"
         assert self.golf_map.encloses(self.target), "Target point doesn't lie inside map polygon"
