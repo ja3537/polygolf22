@@ -118,6 +118,7 @@ class GolfApp(App):
         self.golf_map = self.golf_game.golf.golf_map
         self.golf_start = self.golf_game.golf.start
         self.golf_target = self.golf_game.golf.target
+        self.sand_traps = self.golf_game.golf.sand_traps
 
         bounds = self.golf_map.bounds
         xmin, ymin, xmax, ymax = list(map(float, bounds))
@@ -136,6 +137,11 @@ class GolfApp(App):
             # p.set_stroke(1, "black")
             p.set_fill("#BBFF66")
             self.svgplot.append(p)
+
+            for s in self.sand_traps:
+                trap = self.draw_polygon(s)
+                trap.set_fill("#FFFFCC")
+                self.svgplot.append(trap)
 
             unit_t = sympy.geometry.Triangle(asa=(60, 10, 60))
             golf_start_triangle = sympy.geometry.Triangle(*list(map(lambda p: p.translate(self.golf_start.x-unit_t.circumcenter.x, self.golf_start.y-unit_t.circumcenter.y), unit_t.vertices)))
