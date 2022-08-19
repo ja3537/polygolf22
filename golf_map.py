@@ -23,9 +23,10 @@ class GolfMap:
             self.sand_traps.append(trap)
         for s1 in self.sand_traps:
             assert self.golf_map.encloses(s1), "Golf map must enclose all sand traps"
+            assert not s1.encloses(self.start), "Sand traps may not contain start"
+            assert not s1.encloses(self.target), "Sand traps may not contain target"
             for s2 in self.sand_traps:
                 if s1 == s2:
-                    print("same")
                     continue
                 intersection = s1.intersection(s2)
                 assert not intersection, "sand traps may not intersect"
