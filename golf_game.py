@@ -15,7 +15,7 @@ from players.g2_player import Player as G2_Player
 from players.g3_player import Player as G3_Player
 from players.g4_player import Player as G4_Player
 from players.g5_player import Player as G5_Player
-from players.g6_player import Player as G6_Player
+#from players.g6_player import Player as G6_Player
 from players.g7_player import Player as G7_Player
 from players.g8_player import Player as G8_Player
 from players.g9_player import Player as G9_Player
@@ -477,8 +477,19 @@ class GolfGame:
 
     def __move(self, distance, angle, player_idx):
         curr_loc = self.curr_locs[player_idx]
-        actual_distance = self.rng.normal(distance, distance/self.skills[player_idx])
-        actual_angle = self.rng.normal(angle, 1/(2*self.skills[player_idx]))
+        in_sand = False
+        for s in self.golf.sand_traps:
+            if s.encloses(curr_loc):
+                in_sand = True
+                break
+        if not in_sand:
+            print("not in sand")
+            actual_distance = self.rng.normal(distance, distance/self.skills[player_idx])
+            actual_angle = self.rng.normal(angle, 1/(2*self.skills[player_idx]))
+        else:
+            print("shooting out of sand")
+            actual_distance = self.rng.normal(distance, 2*distance / self.skills[player_idx])
+            actual_angle = self.rng.normal(angle, 2 / (2 * self.skills[player_idx]))
 
         if distance <= constants.max_dist+self.skills[player_idx] and distance >= constants.min_putter_dist:
             landing_point = sympy.Point2D(curr_loc.x+actual_distance*sympy.cos(actual_angle), curr_loc.y+actual_distance*sympy.sin(actual_angle))
