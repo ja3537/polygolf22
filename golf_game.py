@@ -487,7 +487,9 @@ class GolfGame:
             actual_distance = self.rng.normal(distance, distance/self.skills[player_idx])
             actual_angle = self.rng.normal(angle, 1/(2*self.skills[player_idx]))
         else:
+            distance = min(distance, (constants.max_dist+self.skills[player_idx])/2) #backwards compatibility exception for last year's players
             print("shooting out of sand")
+            print("received distance is now " + str(distance))
             actual_distance = self.rng.normal(distance, 2*distance / self.skills[player_idx])
             actual_angle = self.rng.normal(angle, 2 / (2 * self.skills[player_idx]))
 
