@@ -509,8 +509,15 @@ class GolfGame:
         
         self.logger.debug("Observed Distance: {:.3f}, Angle: {:.3f}".format(actual_distance, actual_angle))
 
+        for s in self.golf.sand_traps:
+            if s.encloses(landing_point):
+                print("landed in sand")
+                final_point = landing_point
+                break
+
         segment_air = sympy.geometry.Segment2D(curr_loc, landing_point)
         segment_land = sympy.geometry.Segment2D(landing_point, final_point)
+
 
         if segment_land.distance(self.golf.target) <= constants.target_radius:
             reached_target = True
