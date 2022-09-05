@@ -509,14 +509,34 @@ class GolfGame:
         
         self.logger.debug("Observed Distance: {:.3f}, Angle: {:.3f}".format(actual_distance, actual_angle))
 
-        for s in self.golf.sand_traps:
+        for s in self.golf.sand_traps: #checks for landing in sand
             if s.encloses(landing_point):
                 print("landed in sand")
                 final_point = landing_point
                 break
 
-        segment_air = sympy.geometry.Segment2D(curr_loc, landing_point)
         segment_land = sympy.geometry.Segment2D(landing_point, final_point)
+        intersections = []
+        for s in self.golf.sand_traps: #check for rolling into sand traps
+            intersections.extend(s.intersection(segment_land))
+        minp = None
+        mind = float("inf")
+        for p in intersections:
+            if type(p) == sympy.geometry.Point2D:
+                if p.distance(landing_point) < mind:
+                    minp = p
+                    mind = p.distance(landing_point)
+
+        if minp is not None: #rolled into sand trap
+            if minp.distance(final_point) > 0.01:
+                print("rolled into sandtrap")
+                sand_roll = sympy.Segment2D(minp, final_point)
+                final_point = final_point = sympy.Point2D(minp.x+0.01*sympy.cos(actual_angle), minp.y+0.01*sympy.sin(actual_angle)) #roll 1cm
+                segment_land = sympy.geometry.Segment2D(landing_point, final_point)
+
+
+
+        segment_air = sympy.geometry.Segment2D(curr_loc, landing_point)
 
 
         if segment_land.distance(self.golf.target) <= constants.target_radius:
