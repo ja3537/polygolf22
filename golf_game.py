@@ -483,13 +483,10 @@ class GolfGame:
                 in_sand = True
                 break
         if not in_sand:
-            print("not in sand")
             actual_distance = self.rng.normal(distance, distance/self.skills[player_idx])
             actual_angle = self.rng.normal(angle, 1/(2*self.skills[player_idx]))
         else:
             distance = min(distance, (constants.max_dist+self.skills[player_idx])/2) #backwards compatibility exception for last year's players
-            print("shooting out of sand")
-            print("received distance is now " + str(distance))
             actual_distance = self.rng.normal(distance, 2*distance / self.skills[player_idx])
             actual_angle = self.rng.normal(angle, 2 / (2 * self.skills[player_idx]))
 
@@ -511,7 +508,6 @@ class GolfGame:
 
         for s in self.golf.sand_traps: #checks for landing in sand
             if s.encloses(landing_point):
-                print("landed in sand")
                 final_point = landing_point
                 break
 
@@ -529,7 +525,6 @@ class GolfGame:
 
         if minp is not None: #rolled into sand trap
             if minp.distance(final_point) > 0.01:
-                print("rolled into sandtrap")
                 sand_roll = sympy.Segment2D(minp, final_point)
                 final_point = final_point = sympy.Point2D(minp.x+0.01*sympy.cos(actual_angle), minp.y+0.01*sympy.sin(actual_angle)) #roll 1cm
                 segment_land = sympy.geometry.Segment2D(landing_point, final_point)
