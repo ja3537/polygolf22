@@ -1,13 +1,13 @@
 # Project 4: Polygolf
 
 ## Citation and License
-This project belongs to Department of Computer Science, Columbia University. It may be used for educational purposes under Creative Commons **with proper attribution and citation** for the author TAs **Naman Goyal (First Author), Griffin Adams and the Instructor, Prof. Kenneth Ross**.
+This project belongs to Department of Computer Science, Columbia University. It may be used for educational purposes under Creative Commons **with proper attribution and citation** for the author TAs **Naman Goyal (First Author), Joe Adams, and the Instructor, Prof. Kenneth Ross**.
 
 ## Summary
 
-Course: COMS 4444 Programming and Problem Solving (Fall 2021)  
-Problem Description: http://www.cs.columbia.edu/~kar/4444f21/node21.html  
-Course Website: http://www.cs.columbia.edu/~kar/4444f21  
+Course: COMS 4444 Programming and Problem Solving (Fall 2022)  
+Problem Description: http://www.cs.columbia.edu/~kar/4444f22/node18.html 
+Course Website: http://www.cs.columbia.edu/~kar/4444f22/4444f22.html  
 University: Columbia University  
 Instructor: Prof. Kenneth Ross  
 Project Language: Python
@@ -16,15 +16,15 @@ Project Language: Python
 
 Naman Goyal
 
-### Teaching Assistants for Course
-1. Griffin Adams
-1. Naman Goyal
+#### Modified By
 
-### All course projects
-Project 1: https://github.com/griff4692/chemotaxis  
-Project 2: https://github.com/thenamangoyal/icecream  
-Project 3: https://github.com/griff4692/coms4444_flowers/  
-Project 4: https://github.com/thenamangoyal/polygolf  
+Joe Adams
+
+### Teaching Assistants for Course
+1. Joe Adams
+1. Rohit Gopalakrishnan
+
+
 
 ## Installation
 
@@ -58,6 +58,9 @@ Generating map and saving to `<map_path>.json` file
 ```bash
 python gen_map.py -f <map_path>.json
 ```
+
+### Sand Traps
+Sand traps may not intersect or share boundaries with each other or the map polygon. The start point and target cannot be in a sand trap.
 
 ## Optional Flags
 
