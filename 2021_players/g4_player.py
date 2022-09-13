@@ -25,9 +25,7 @@ class Point:
 
 
 class Player:
-    def __init__(self, skill: int, rng: np.random.Generator, logger: logging.Logger, golf_map: sympy.Polygon,
-                 start: sympy.geometry.Point2D, target: sympy.geometry.Point2D, map_path: str,
-                 precomp_dir: str) -> None:
+    def __init__(self, skill: int, rng: np.random.Generator, logger: logging.Logger, golf_map: sympy.Polygon, start: sympy.geometry.Point2D, target: sympy.geometry.Point2D, sand_traps: list[sympy.geometry.Point2D], map_path: str, precomp_dir: str) -> None:
         """Initialise the player with given skill.
 
         Args:
@@ -225,9 +223,7 @@ class Player:
             #             queue.append(point)
         return grid_of_scores
 
-    def play(self, score: int, golf_map: sympy.Polygon, target: sympy.geometry.Point2D,
-             curr_loc: sympy.geometry.Point2D, prev_loc: sympy.geometry.Point2D,
-             prev_landing_point: sympy.geometry.Point2D, prev_admissible: bool) -> Tuple[float, float]:
+    def play(self, score: int, golf_map: sympy.Polygon, target: sympy.geometry.Point2D, sand_traps: list[sympy.geometry.Point2D], curr_loc: sympy.geometry.Point2D, prev_loc: sympy.geometry.Point2D, prev_landing_point: sympy.geometry.Point2D, prev_admissible: bool) -> Tuple[float, float]:
         """Function which based n current game state returns the distance and angle, the shot must be played 
 
         Args:
