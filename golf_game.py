@@ -15,7 +15,7 @@ from players.g2_player import Player as G2_Player
 from players.g3_player import Player as G3_Player
 from players.g4_player import Player as G4_Player
 from players.g5_player import Player as G5_Player
-#from players.g6_player import Player as G6_Player
+from players.g6_player import Player as G6_Player
 from players.g7_player import Player as G7_Player
 from players.g8_player import Player as G8_Player
 from players.g9_player import Player as G9_Player
@@ -165,7 +165,7 @@ class GolfGame:
                 signal.alarm(constants.timeout)
             try:
                 start_time = time.time()
-                player = player_class(skill=skill, rng=self.rng, logger=self.__get_player_logger(player_name), golf_map=self.golf.golf_map.copy(), start=self.golf.start.copy(), target=self.golf.target.copy(), map_path=player_map_path, precomp_dir=precomp_dir)
+                player = player_class(skill=skill, rng=self.rng, logger=self.__get_player_logger(player_name), golf_map=self.golf.golf_map.copy(), start=self.golf.start.copy(), target=self.golf.target.copy(), sand_traps = self.golf.sand_traps, map_path=player_map_path, precomp_dir=precomp_dir)
                 if self.use_timeout:
                     signal.alarm(0)      # Clear alarm
             except TimeoutException:
@@ -408,6 +408,7 @@ class GolfGame:
                             score=self.scores[player_idx],
                             golf_map=self.golf.golf_map.copy(),
                             target=self.golf.target.copy(),
+                            sand_traps=self.golf.sand_traps,
                             curr_loc=self.curr_locs[player_idx].copy(),
                             prev_loc=prev_loc,
                             prev_landing_point=prev_landing_point,
