@@ -1,7 +1,12 @@
 import numpy as np
+import pandas as pd
 import sympy
+import random
+import shapely.geometry, shapely.ops
+import sklearn.cluster
 import logging
 from typing import Tuple, List
+import matplotlib.pyplot as plt
 
 class Player:
     def __init__(self, skill: int, rng: np.random.Generator, logger: logging.Logger, golf_map: sympy.Polygon, start: sympy.geometry.Point2D, target: sympy.geometry.Point2D, sand_traps: List[sympy.geometry.Point2D], map_path: str, precomp_dir: str) -> None:
@@ -21,6 +26,9 @@ class Player:
         self.skill = skill
         self.rng = rng
         self.logger = logger
+
+        self.shapely_map = shapely.geometry.Polygon(golf_map.vertices)
+        self.split_polygon(self.shapely_map, 20)
 
 
     def play(self, score: int, golf_map: sympy.Polygon, target: sympy.geometry.Point2D, sand_traps: List[sympy.geometry.Point2D], curr_loc: sympy.geometry.Point2D, prev_loc: sympy.geometry.Point2D, prev_landing_point: sympy.geometry.Point2D, prev_admissible: bool) -> Tuple[float, float]:
@@ -46,4 +54,47 @@ class Player:
         distance = sympy.Min(200+self.skill, required_dist/roll_factor)
         angle = sympy.atan2(target.y - curr_loc.y, target.x - curr_loc.x)
         return (distance, angle)
+
+    def split_polygon(self, golf_map: sympy.Polygon, regions: int) -> List[shapely.geometry.Polygon]:
+        """ Split a given Golf Map into regions of roughly equal size.
+        Based on an algorithm described by Paul Ramsey: http://blog.cleverelephant.ca/2018/06/polygon-splitting.html
+
+        Args:
+            golf_map (shapely.geometry.Plygon): The Golf Map to split into equal sized regions
+            regions (int): The number of roughly equal sized regions to split the map into
+
+        Returns:
+            List[shapely.geometry.Polygon]: Returns a list of polygons, each representing a roughly equal sized region of the given map
+
+        """
+
+        # Generate random points within the bounds of the given map
+        # (based on https://gis.stackexchange.com/questions/207731/generating-random-coordinates-in-multipolygon-in-python)
+        points = []
+        min_x, min_y, max_x, max_y = golf_map.bounds
+        while len(points) < 25*regions:
+            pt = shapely.geometry.Point(random.uniform(min_x, max_x), random.uniform(min_y, max_y))
+            if golf_map.contains(pt):
+                points.append(pt)
+
+        # Cluster the random points into groups using kmeans
+        points_df = pd.DataFrame([[pt.x, pt.y] for pt in points], columns=['x', 'y'])
+        kmeans = sklearn.cluster.KMeans(n_clusters=regions, init='k-means++').fit(points_df)
+
+        # Generate a voronoi diagram from the centers of the generated regions
+        center_points = shapely.geometry.MultiPoint(kmeans.cluster_centers_)
+        regions = shapely.ops.voronoi_diagram(center_points)
+
+        # Intersect the generated regions with the given map
+        regions = [region.intersection(golf_map) for region in regions]
+
+        # Plot the random points, cluster centers, and voronoi regions
+        plt.plot(*golf_map.exterior.xy)
+        plt.scatter([pt.x for pt in points], [pt.y for pt in points], s=5)
+        plt.scatter([pt[0] for pt in kmeans.cluster_centers_], [pt[1] for pt in kmeans.cluster_centers_], color='red')
+        for region in regions:
+            plt.plot(*region.exterior.xy)
+        plt.show()
+
+        return regions
 
