@@ -18,6 +18,10 @@ class Player:
             precomp_dir (str): Directory path to store/load precomputation
         """
 
+        self.skill = skill
+        self.rng = rng
+        self.logger = logger
+
 
     def play(self, score: int, golf_map: sympy.Polygon, target: sympy.geometry.Point2D, sand_traps: list[sympy.geometry.Point2D], curr_loc: sympy.geometry.Point2D, prev_loc: sympy.geometry.Point2D, prev_landing_point: sympy.geometry.Point2D, prev_admissible: bool) -> Tuple[float, float]:
         """Function which based n current game state returns the distance and angle, the shot must be played
@@ -34,3 +38,12 @@ class Player:
         Returns:
             Tuple[float, float]: Return a tuple of distance and angle in radians to play the shot
         """
+
+        required_dist = curr_loc.distance(target)
+        roll_factor = 1.1
+        if required_dist < 20:
+            roll_factor  = 1.0
+        distance = sympy.Min(200+self.skill, required_dist/roll_factor)
+        angle = sympy.atan2(target.y - curr_loc.y, target.x - curr_loc.x)
+        return (distance, angle)
+
