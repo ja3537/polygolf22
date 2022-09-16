@@ -452,13 +452,13 @@ def test_is_in_sand_trap():
             "point": (5,5),
             "sand_traps": [],  # empty to test if cache is checked
             "cache": {(5,5)},
-            "expect": False
+            "expect": True
         }
     ]
 
     for tc in cases:
         sand_trap_matplot_polys = [sympy_poly_to_mpl(poly) for poly in tc["sand_traps"]]
-        cache = set() if "cahce" not in tc else tc["cache"]
+        cache = set() if "cache" not in tc else tc["cache"]
         ans = is_in_sand_trap(tc["point"], sand_trap_matplot_polys, cache)
 
         assert ans == tc["expect"]
