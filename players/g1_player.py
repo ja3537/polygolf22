@@ -7,7 +7,7 @@ import logging
 import heapq
 from scipy import stats as scipy_stats
 
-from typing import Tuple, Iterator, List, Union
+from typing import Tuple, Iterator, List, Union, Set
 from sympy.geometry import Polygon, Point2D
 from matplotlib.path import Path
 from shapely.geometry import Polygon as ShapelyPolygon, Point as ShapelyPoint
@@ -85,7 +85,9 @@ def poly_to_points(poly: Polygon) -> Iterator[Tuple[float, float]]:
 
 def sympy_poly_to_mpl(sympy_poly: Polygon) -> Path:
     """Helper function to convert sympy Polygon to matplotlib Path object"""
-    v = sympy_poly.vertices
+    # A polygon of 3 points will be typed as a Triangle and the its vertices is a tuple
+    # so we need to transform it into list here for append to work
+    v = list(sympy_poly.vertices)
     v.append(v[0])
     return Path(v, closed=True)
 
@@ -95,6 +97,32 @@ def sympy_poly_to_shapely(sympy_poly: Polygon) -> ShapelyPolygon:
     v = sympy_poly.vertices
     v.append(v[0])
     return ShapelyPolygon(v)
+
+
+def is_in_sand_trap(point: Tuple[float, float], sand_traps: List[Path], cache: Set[Tuple[float, float]] = set()) -> bool:
+    """Returns True if @point is in the sand trap, otherwise False.
+
+    @param cache: set of points known to be in sand trap, e.g. pre-computed map points that are in sand traps.
+    """
+    if point in cache:
+        return True
+
+    for sand_trap_poly in sand_traps:
+        if sand_trap_poly.contains_point(point):
+            return True
+
+    return False
+
+
+def find_map_points_in_sand_trap(map_points: List[Tuple[float, float]], sand_traps: List[Path]) -> Set[Tuple[float, float]]:
+    """Returns a set of map points that are in any of the sand traps."""
+    points_in_sand_trap = set()
+
+    for map_point in map_points:
+        if is_in_sand_trap(map_point, sand_traps):
+            points_in_sand_trap.add(map_point)
+
+    return points_in_sand_trap
 
 
 class ScoredPoint:
@@ -144,7 +172,7 @@ class ScoredPoint:
 
 
 class Player:
-    def __init__(self, skill: int, rng: np.random.Generator, logger: logging.Logger, golf_map: sympy.Polygon, start: sympy.geometry.Point2D, target: sympy.geometry.Point2D, sand_traps: List[sympy.geometry.Point2D], map_path: str, precomp_dir: str) -> None:
+    def __init__(self, skill: int, rng: np.random.Generator, logger: logging.Logger, golf_map: sympy.Polygon, start: sympy.geometry.Point2D, target: sympy.geometry.Point2D, sand_traps: List[sympy.Polygon], map_path: str, precomp_dir: str) -> None:
         """Initialise the player with given skill.
 
         Args:
@@ -178,6 +206,8 @@ class Player:
         self.rng = rng
         self.logger = logger
         self.np_map_points = None
+        self.map_points_in_sand_trap = None  # :: Set[Tuple[float, float]]
+        self.sand_trap_matlab_polys = None   # :: List[Path]
         self.mpl_paly = None
         self.shapely_poly = None
         self.goal = None
@@ -191,6 +221,10 @@ class Player:
         self.conf = 0.95
         if self.skill < 40:
             self.conf = 0.75
+        
+        # initialize logger
+        self.logger = logging.getLogger(__name__)
+        self.logger.setLevel(logging.DEBUG)
 
     @functools.lru_cache()
     def _max_ddist_ppf(self, conf: float):
@@ -279,25 +313,25 @@ class Player:
         # No path available
         return None
 
-    def _initialize_map_points(self, goal: Tuple[float, float], golf_map: Polygon):
-        # Storing the points as numpy array
-        np_map_points = [goal]
-        map_points = [goal]
+    def _initialize_map_points(self, goal: Tuple[float, float], golf_map: Polygon, sand_traps: List[sympy.Polygon]):
+        np_map_points = [goal] # storing the points as numpy array
         self.mpl_poly = sympy_poly_to_mpl(golf_map)
         self.shapely_poly = sympy_poly_to_shapely(golf_map)
+        self.sand_trap_matlab_polys = [sympy_poly_to_mpl(sand_trap) for sand_trap in sand_traps]
+
         pp = list(poly_to_points(golf_map))
         for point in pp:
             # Use matplotlib here because it's faster than shapely for this calculation...
             if self.mpl_poly.contains_point(point):
-                # map_points.append(point)
                 x, y = point
                 np_map_points.append(np.array([x, y]))
-        # self.map_points = np.array(map_points)
+
+        self.map_points_in_sand_trap = find_map_points_in_sand_trap(pp, self.sand_trap_matlab_polys)
         self.np_map_points = np.array(np_map_points)
         self.np_goal_dist = cdist(self.np_map_points, np.array([np.array(self.goal)]), 'euclidean')
         self.np_goal_dist = self.np_goal_dist.flatten()
 
-    def play(self, score: int, golf_map: sympy.Polygon, target: sympy.geometry.Point2D, sand_traps: List[sympy.geometry.Point2D], curr_loc: sympy.geometry.Point2D, prev_loc: sympy.geometry.Point2D, prev_landing_point: sympy.geometry.Point2D, prev_admissible: bool) -> Tuple[float, float]:
+    def play(self, score: int, golf_map: sympy.Polygon, target: sympy.geometry.Point2D, sand_traps: List[sympy.Polygon], curr_loc: sympy.geometry.Point2D, prev_loc: sympy.geometry.Point2D, prev_landing_point: sympy.geometry.Point2D, prev_admissible: bool) -> Tuple[float, float]:
         """Function which based n current game state returns the distance and angle, the shot must be played 
 
         Args:
@@ -315,7 +349,7 @@ class Player:
         if self.np_map_points is None:
             gx, gy = float(target.x), float(target.y)
             self.goal = float(target.x), float(target.y)
-            self._initialize_map_points((gx, gy), golf_map)
+            self._initialize_map_points((gx, gy), golf_map, sand_traps)
 
         # Optimization to retry missed shots
         if self.prev_rv is not None and curr_loc == prev_loc:
@@ -391,3 +425,75 @@ def test_poly_to_points():
         for y in range(1, 10):
             assert (x,y) in points
     assert len(points) == 81
+
+
+def test_is_in_sand_trap():
+    cases = [
+        {
+            "name": "point in one of the sand traps",
+            "point": (5,5),
+            "sand_traps": [
+                Polygon((4,4), (4,9), (9,9), (9,4)),
+                Polygon((0,0), (0,4), (3,0))
+            ],
+            "expect": True
+        },
+        {
+            "name": "point not in any sand trap",
+            "point": (10,10),
+            "sand_traps": [
+                Polygon((4,4), (4,9), (9,9), (9,4)),
+                Polygon((0,0), (0,4), (3,0))
+            ],
+            "expect": False
+        },
+        {
+            "name": "point in cache",
+            "point": (5,5),
+            "sand_traps": [],  # empty to test if cache is checked
+            "cache": {(5,5)},
+            "expect": False
+        }
+    ]
+
+    for tc in cases:
+        sand_trap_matplot_polys = [sympy_poly_to_mpl(poly) for poly in tc["sand_traps"]]
+        cache = set() if "cahce" not in tc else tc["cache"]
+        ans = is_in_sand_trap(tc["point"], sand_trap_matplot_polys, cache)
+
+        assert ans == tc["expect"]
+
+
+def test_find_map_points_in_sand_trap():
+    cases = [
+        {
+            "name": "no point in sand trap",
+            "map_points": [(9.5, 9.5), (5., 5.), (5., 10.), (10., 5.), (10., 10.)],
+            "sand_traps": [
+                Polygon((0,0), (0,2), (2,2), (2,0))
+            ],
+            "expect": set()
+        },
+        {
+            "name": "one point in sand trap",
+            "map_points": [(9.5, 9.5), (5., 5.), (5., 10.), (10., 5.), (10., 10.)],
+            "sand_traps": [
+                Polygon((4,4), (4,9), (9,9), (9,4))
+            ],
+            "expect": {(5., 5.)}
+        },
+        {
+            "name": "multiple points in sand trap",
+            "map_points": [(9.5, 9.5), (5., 5.), (5., 10.), (10., 5.), (10., 10.)],
+            "sand_traps": [
+                Polygon((4,4), (4,9), (9,9), (9,4)),
+                Polygon((9,9), (9,10), (10,10), (10,9))
+            ],
+            "expect": {(9.5, 9.5), (5., 5.)}
+        }
+    ]
+
+    for tc in cases:
+        sand_trap_paths = [sympy_poly_to_mpl(poly) for poly in tc["sand_traps"]]
+        points_in_sand_trap = find_map_points_in_sand_trap(tc["map_points"], sand_trap_paths)
+        assert points_in_sand_trap == tc["expect"]
