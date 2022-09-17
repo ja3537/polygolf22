@@ -255,12 +255,8 @@ class Player:
         splash_zone_poly_points = splash_zone(float(distance), float(angle), float(conf), self.skill, current_point, this_in_sand)
         shapely_splash_zone_poly_points = ShapelyPolygon(splash_zone_poly_points)
         if not self.is_in_sand(target_point):
-            geom_p8 = [ ShapelyShape(feat["geometry"]) for feat in self.sand_traps ]
-            total_overlap = 0
-            for j, g8 in enumerate(geom_p8):
-                if shapely_splash_zone_poly_points.intersects(g8):
-                    total_overlap += shapely_splash_zone_poly_points.intersection(g8).area
-            return total_overlap/shapely_splash_zone_poly_points <= 0.3
+            total_overlap = sum([shapely_splash_zone_poly_points.intersection(sand_trap).area for sand_trap in self.sand_traps if shapely_splash_zone_poly_points.intersects(self.shapely_poly)])
+            return total_overlap/shapely_splash_zone_poly_points.area <= 1 - conf
 
         return self.shapely_poly.contains(shapely_splash_zone_poly_points)
 
@@ -300,11 +296,8 @@ class Player:
                 # All we care about is the next point
                 # TODO: We need to check if the path length is <= 10, because if it isn't we probably need to
                 #  reduce the conf and try again for a shorter path.
-                print("found path")
                 while next_sp.previous.point != start_point:
                     next_sp = next_sp.previous
-                    print(next_sp)
-                    print(f"Dist {np.linalg.norm(np.array(next_sp.point) - np.array(next_sp.previous.point))}")
                 return next_sp.point
             
             # Add adjacent points to heap
@@ -326,18 +319,14 @@ class Player:
 
     def _initialize_map_points(self, goal: Tuple[float, float], golf_map: Polygon):
         # Storing the points as numpy array
-        np_map_points = [goal]
+        # np_map_points = [goal]
         map_points = [goal]
         self.mpl_poly = sympy_poly_to_mpl(golf_map)
         self.shapely_poly = sympy_poly_to_shapely(golf_map)
         pp = list(poly_to_points(golf_map))
 
-        for point in pp:
-            # Use matplotlib here because it's faster than shapely for this calculation...
-            if self.mpl_poly.contains_point(point):
-                # map_points.append(point)
-                x, y = point
-                np_map_points.append(np.array([x, y]))
+        np_map_points = [np.array([x, y]) for x, y in pp if self.mpl_poly.contains_point((x, y))]
+        np_map_points.insert(0, goal)
 
         # self.map_points = np.array(map_points)
         self.np_map_points = np.array(np_map_points)
@@ -368,7 +357,6 @@ class Player:
             Tuple[float, float]: Return a tuple of distance and angle in radians to play the shot
         """
         if self.np_map_points is None:
-            print("init in play")
             gx, gy = float(target.x), float(target.y)
             self.goal = float(target.x), float(target.y)
             self._initialize_map_points((gx, gy), golf_map) ## initrialize at runtime? multi thread it?
@@ -404,6 +392,7 @@ class Player:
                 offset = 0
                 prev_target = target_point
                 while offset < max_offset and self.splash_zone_within_polygon(tuple(current_point), target_point, confidence):
+                    print(self.splash_zone_within_polygon(tuple(current_point), target_point, confidence))
                     offset += 1
                     dist = original_dist - offset
                     prev_target = target_point
