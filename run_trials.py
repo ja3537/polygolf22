@@ -28,7 +28,7 @@ def run_trial(pargs):
     trials = []
     for trial in range(args.trials):
         proc = subprocess.run(
-            f"python main.py --map {map} --skill {skill} --seed {randint(0, sys.maxsize)} --disable_logging --no_gui",
+            f"python main.py --map {map} --skill {skill} --players 2 --seed {randint(0, sys.maxsize)} --disable_logging --no_gui",
             shell=True,
             stdout=subprocess.PIPE,
         )

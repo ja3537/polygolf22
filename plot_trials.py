@@ -22,6 +22,8 @@ def plot_trials(logs):
     plt.title(f"Map: {map_path}")
     fig = plt.figure()
     skill_subfigures = fig.subfigures(1, num_skill_levels)
+    if num_skill_levels == 1:
+        skill_subfigures = [skill_subfigures]
 
     for i, skill_log_obj in enumerate(logs):
         skill = skill_log_obj["skill"]

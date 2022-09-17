@@ -4,6 +4,7 @@ import argparse
 import constants
 from golf_game import GolfGame
 import json
+from numpyencoder import NumpyEncoder
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -78,4 +79,4 @@ if __name__ == "__main__":
     if not golf_game.use_gui:
         golf_game.play_all()
         result = golf_game.get_state()
-        print(json.dumps(result))
+        print(json.dumps(result, cls=NumpyEncoder))
