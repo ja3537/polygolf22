@@ -17,8 +17,8 @@ from scipy.spatial.distance import cdist
 # Cached distribution
 DIST = scipy_stats.norm(0, 1)
 SAND_DIST = scipy_stats.norm(0, 2)
-X_STEP = 5.0
-Y_STEP = 5.0
+X_STEP = 10
+Y_STEP = 10
 
 
 @functools.lru_cache()
