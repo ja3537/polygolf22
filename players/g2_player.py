@@ -103,7 +103,7 @@ def sympy_poly_to_mpl(sympy_poly: Polygon) -> Path:
 
 def sympy_poly_to_shapely(sympy_poly: Polygon) -> ShapelyPolygon:
     """Helper function to convert sympy Polygon to shapely Polygon object"""
-    v = sympy_poly.vertices
+    v = list(sympy_poly.vertices)
     v.append(v[0])
     return ShapelyPolygon(v)
 
@@ -207,7 +207,8 @@ class Player:
         ## ADDED
 
         self.map_points_is_sand = {}
-        self.sand_traps = sand_traps
+        self.sand_traps = [sympy_poly_to_shapely(sympy_poly) for sympy_poly in sand_traps]
+
         self.current_shot_in_sand = None
 
         if self.np_map_points is None:
@@ -289,8 +290,11 @@ class Player:
                 # All we care about is the next point
                 # TODO: We need to check if the path length is <= 10, because if it isn't we probably need to
                 #  reduce the conf and try again for a shorter path.
+                print("found path")
                 while next_sp.previous.point != start_point:
                     next_sp = next_sp.previous
+                    print(next_sp)
+                    print(f"Dist {np.linalg.norm(np.array(next_sp.point) - np.array(next_sp.previous.point))}")
                 return next_sp.point
             
             # Add adjacent points to heap
@@ -333,7 +337,8 @@ class Player:
     #ADDED encloses vs encloses_point??? can speed up using mpl instead of point2d?
     def is_in_sand(self, point: sympy.geometry.Point2D):
         if (point not in self.map_points_is_sand):
-            self.map_points_is_sand[point] = any(s.encloses_point(point) for s in self.sand_traps)
+            shapelyPoint = ShapelyPoint(point[0], point[1])
+            self.map_points_is_sand[point] = any(s.contains(shapelyPoint) for s in self.sand_traps)
         return self.map_points_is_sand[point]
 
 
@@ -363,6 +368,7 @@ class Player:
             return self.prev_rv
 
         self.current_shot_in_sand = self.is_in_sand(curr_loc)
+        print(f"Current shot in sand: {self.current_shot_in_sand}")
 
         target_point = None
         confidence = self.conf
