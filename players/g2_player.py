@@ -205,7 +205,8 @@ class Player:
             self.conf = 0.75
 
         ## ADDED
-  
+
+        self.map_points_is_sand = {}
         self.sand_traps = sand_traps
         self.current_shot_in_sand = None
 
@@ -317,22 +318,12 @@ class Player:
         self.shapely_poly = sympy_poly_to_shapely(golf_map)
         pp = list(poly_to_points(golf_map))
 
-        # ADDED
-        map_points_is_sand = []
-
         for point in pp:
             # Use matplotlib here because it's faster than shapely for this calculation...
             if self.mpl_poly.contains_point(point):
                 # map_points.append(point)
                 x, y = point
                 np_map_points.append(np.array([x, y]))
-
-                # ADDED
-                map_points_is_sand.append(self.is_in_sand(point))
-
-
-        # ADDED
-        self.map_points_is_sand = map_points_is_sand
 
         # self.map_points = np.array(map_points)
         self.np_map_points = np.array(np_map_points)
@@ -341,7 +332,9 @@ class Player:
 
     #ADDED encloses vs encloses_point??? can speed up using mpl instead of point2d?
     def is_in_sand(self, point: sympy.geometry.Point2D):
-        return any(s.encloses_point(point) for s in self.sand_traps)
+        if (point not in self.map_points_is_sand):
+            self.map_points_is_sand[point] = any(s.encloses_point(point) for s in self.sand_traps)
+        return self.map_points_is_sand[point]
 
 
     def play(self, score: int, golf_map: sympy.Polygon, target: sympy.geometry.Point2D, sand_traps: list[sympy.Polygon], curr_loc: sympy.geometry.Point2D, prev_loc: sympy.geometry.Point2D, prev_landing_point: sympy.geometry.Point2D, prev_admissible: bool) -> Tuple[float, float]:
