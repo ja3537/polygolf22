@@ -3,6 +3,7 @@ import sympy
 import logging
 from typing import Tuple, List
 from shapely.geometry import Polygon, Point, LineString
+from scipy.spatial import distance
 
 
 class Player:
@@ -55,14 +56,33 @@ class Player:
         print("Testing")
         print(self.start_pt)
 
+    
+        self.get_heuristic(curr_loc[0], curr_loc[1])
+        self.get_heuristic(400, 400)
+
+
         for trap in self.sand_traps:
             print("Trap : ")
             print(trap)
 
 
-    def in_sand_trap(self, x, y):
-        point = Point(x, y)
+    def in_sand_trap(self, point: Point):
         for trap in self.sand_traps:
             if trap.contains(point):
                 return True
         return False
+
+
+    def get_heuristic(self, x, y):
+        point = Point(x, y)
+        dist = distance.euclidean(point, self.end_pt)
+
+        max_dist = 200 + self.skill
+        heuristic = 0
+        if self.in_sand_trap(point):
+            heuristic = ( (dist - max_dist/2) / max_dist) + 1
+        else:
+            heuristic = dist / max_dist
+        
+        print("Euc Dist: {}, Heuristic: {}".format(dist, heuristic))
+        return heuristic
