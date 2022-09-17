@@ -3,6 +3,7 @@ import sympy
 import logging
 from typing import Tuple, List
 from shapely.geometry import Polygon, Point, LineString
+<<<<<<< Updated upstream
 from shapely.validation import make_valid
 import skgeom as sg
 from skgeom.draw import draw
@@ -14,6 +15,26 @@ import time
 from scipy.spatial import distance
 
 DEBUG_MSG = False
+=======
+from scipy.spacial import distance
+import queue
+
+@dataclass(order=True)
+class PrioritizedItem:
+    priority: float
+    item: Any=field(compare=False)
+
+class Frontier():
+    def __init__(self, x_y:tuple):
+        self.pq = queue.PriorityQueue()
+        cost = 1 + get_heuristic(x_y[0], x_y[1])
+        
+        self.setPQ = set()
+        self.setPQ.add(self.pq.put(PrioritizedItem(cost, x_y)))
+
+    def __eq__(self, other):
+        return self.position == other.position
+>>>>>>> Stashed changes
 
 class Player:
     def __init__(self, skill: int, rng: np.random.Generator, logger: logging.Logger, golf_map: sympy.Polygon, start: sympy.geometry.Point2D, target: sympy.geometry.Point2D, sand_traps: List[sympy.geometry.Point2D], map_path: str, precomp_dir: str) -> None:
@@ -485,3 +506,44 @@ class Player:
             print("Trap : ")
             print(trap)
 
+
+    def A_star_search(graph, start, target) -> List[int]:
+        frontier = Frontier(start)
+        explored = set()
+        gamePathXY = []
+        while frontier:
+            state = frontier.pop()
+            explored.add(state)
+            if start == target:
+                gamePathXY.add(target)
+                break
+            for neighbor in graph[state]:
+                if neighbor not in explored.union(frontier.setPQ):
+                    cost = costParent(state) + get_heuristic(neighbor)
+                    frontier.setPQ.add(PrioritizedItem(cost, neighbor))
+                
+
+
+
+
+
+    def in_sand_trap(self, x, y):
+        point = Point(x, y)
+        for trap in self.sand_traps:
+            if trap.contains(point):
+                return True
+        return False
+
+    def get_heuristic(self, x, y):
+        point = Point(x, y)
+        dist = distance.euclidean(point, self.end_pt)
+
+        max_dist = 200 + self.skill
+        heuristic = 0
+        if self.in_sand_trap(point):
+            heuristic = ( (dist - max_dist/2) / max_dist) + 1
+        else:
+            heuristic = dist / max_dist
+        
+        print("Euc Dist: {}, Heuristic: {}".format(dist, heuristic))
+        return heuristic
