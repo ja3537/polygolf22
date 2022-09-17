@@ -15,7 +15,7 @@ def main():
         print("Map: " + map)
         for skill in skills:
             print("Skill: " + str(skill))
-            res = subprocess.check_output(['python3', './main.py', '-nb', '-ng', '--skill', str(skill),  '-p', "2", "1", '--map', map]).decode('utf-8').replace("'", '"').replace("(", '').replace(")", '')
+            res = subprocess.check_output(['python3', './main.py', '-nb', '-ng', '--skill', str(skill),  '-p', "2", '--map', map]).decode('utf-8').replace("'", '"').replace("(", '').replace(")", '')
             jsonResults = json.loads(res)
             if (jsonResults['player_states'][0] == "S"):
                 if (len(jsonResults["player_states"]) > 1):

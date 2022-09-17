@@ -215,7 +215,7 @@ class Player:
                 gx, gy = float(target.x), float(target.y)
                 self.goal = float(target.x), float(target.y)
                 self._initialize_map_points((gx, gy), golf_map)
-                print(f"done init map with {len(self.np_map_points)} points")
+                # print(f"done init map with {len(self.np_map_points)} points")
 
 
     @functools.lru_cache()
@@ -368,7 +368,7 @@ class Player:
             return self.prev_rv
 
         self.current_shot_in_sand = self.is_in_sand(curr_loc)
-        print(f"Current shot in sand: {self.current_shot_in_sand}")
+        # print(f"Current shot in sand: {self.current_shot_in_sand}")
 
         target_point = None
         confidence = self.conf
@@ -377,7 +377,7 @@ class Player:
             if confidence <= 0.5:
                 return None
 
-            print(f"turn # {score} searching with {confidence} confidence")
+            # print(f"turn # {score} searching with {confidence} confidence")
             target_point = self.next_target(cl, target, confidence)
             confidence -= 0.05
 
