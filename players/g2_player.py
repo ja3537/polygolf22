@@ -57,7 +57,7 @@ def splash_zone(distance: float, angle: float, conf: float, skill: int, current_
         distances = np.vectorize(standard_ppf)(conf_points) * (distance / skill) + distance
         angles = np.vectorize(standard_ppf)(conf_points) * (1/(2*skill)) + angle
     scale = 1.1
-    if distance <= 20:
+    if distance <= 20 and not current_point_in_sand:
         scale = 1.0
     max_distance = distances[-1]*scale
     top_arc = spread_points(current_point, angles, max_distance, False)
