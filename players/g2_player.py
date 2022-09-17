@@ -17,8 +17,8 @@ from scipy.spatial.distance import cdist
 # Cached distribution
 DIST = scipy_stats.norm(0, 1)
 SAND_DIST = scipy_stats.norm(0, 2)
-X_STEP = 20
-Y_STEP = 20
+X_STEP = 10
+Y_STEP = 10
 
 
 @functools.lru_cache()
@@ -404,7 +404,7 @@ class Player:
         tx, ty = target_point
         angle = np.arctan2(ty - cy, tx - cx)
 
-        rv = curr_loc.distance(Point2D(target_point, evaluate=False)) * (2 if self.current_shot_in_sand else 1), angle
+        rv = curr_loc.distance(Point2D(target_point, evaluate=False)), angle
         self.prev_rv = rv
         return rv
 
