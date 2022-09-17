@@ -236,7 +236,7 @@ class Player:
         current_point = np.array(current_point).astype(float)
         target_point = np.array(target_point).astype(float)
 
-        return np.linalg.norm(current_point - target_point) <= self._max_ddist_ppf(conf) if self.is_in_sand(current_point) else self._max__sand_ddist_ppf(conf)
+        return np.linalg.norm(current_point - target_point) <= self._max_ddist_ppf(conf) if not self.is_in_sand(current_point) else self._max__sand_ddist_ppf(conf)
     
     def splash_zone_within_polygon(self, current_point: Tuple[float, float], target_point: Tuple[float, float], conf: float) -> bool:
         if type(current_point) == Point2D:
@@ -257,7 +257,7 @@ class Player:
     def numpy_adjacent_and_dist(self, point: Tuple[float, float], conf: float):
         cloc_distances = cdist(self.np_map_points, np.array([np.array(point)]), 'euclidean')
         cloc_distances = cloc_distances.flatten()
-        distance_mask = cloc_distances <= (self._max_ddist_ppf(conf) if self.is_in_sand(point) else self._max__sand_ddist_ppf(conf))
+        distance_mask = cloc_distances <= (self._max_ddist_ppf(conf) if not self.is_in_sand(point) else self._max__sand_ddist_ppf(conf))
 
         reachable_points = self.np_map_points[distance_mask]
         goal_distances = self.np_goal_dist[distance_mask]
