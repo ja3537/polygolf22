@@ -17,8 +17,8 @@ from scipy.spatial.distance import cdist
 # Cached distribution
 DIST = scipy_stats.norm(0, 1)
 SAND_DIST = scipy_stats.norm(0, 2)
-X_STEP = 5.0
-Y_STEP = 5.0
+X_STEP = 20
+Y_STEP = 20
 
 
 @functools.lru_cache()
@@ -319,7 +319,7 @@ class Player:
 
     def _initialize_map_points(self, goal: Tuple[float, float], golf_map: Polygon):
         # Storing the points as numpy array
-        # np_map_points = [goal]
+        np_map_points = [goal]
         map_points = [goal]
         self.mpl_poly = sympy_poly_to_mpl(golf_map)
         self.shapely_poly = sympy_poly_to_shapely(golf_map)
@@ -335,6 +335,8 @@ class Player:
 
     #ADDED encloses vs encloses_point??? can speed up using mpl instead of point2d?
     def is_in_sand(self, point: sympy.geometry.Point2D):
+        if (type(point) == np.ndarray):
+            point = Point2D(point[0], point[1])
         if (point not in self.map_points_is_sand):
             shapelyPoint = ShapelyPoint(point[0], point[1])
             self.map_points_is_sand[point] = any(s.contains(shapelyPoint) for s in self.sand_traps)
@@ -392,7 +394,6 @@ class Player:
                 offset = 0
                 prev_target = target_point
                 while offset < max_offset and self.splash_zone_within_polygon(tuple(current_point), target_point, confidence):
-                    print(self.splash_zone_within_polygon(tuple(current_point), target_point, confidence))
                     offset += 1
                     dist = original_dist - offset
                     prev_target = target_point
