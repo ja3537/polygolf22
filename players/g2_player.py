@@ -10,7 +10,7 @@ from scipy import stats as scipy_stats
 from typing import Tuple, Iterator, List, Union
 from sympy.geometry import Polygon, Point2D
 from matplotlib.path import Path
-from shapely.geometry import Polygon as ShapelyPolygon, Point as ShapelyPoint
+from shapely.geometry import Polygon as ShapelyPolygon, Point as ShapelyPoint, shape as ShapelyShape
 from scipy.spatial.distance import cdist
 
 
@@ -247,12 +247,22 @@ class Player:
 
         # ADDED
         this_in_sand = self.is_in_sand(current_point)
+
         distance = np.linalg.norm(np.array(current_point).astype(float) - np.array(target_point).astype(float)) * (2 if this_in_sand else 1)
         cx, cy = current_point
         tx, ty = target_point
         angle = np.arctan2(float(ty) - float(cy), float(tx) - float(cx))
         splash_zone_poly_points = splash_zone(float(distance), float(angle), float(conf), self.skill, current_point, this_in_sand)
-        return self.shapely_poly.contains(ShapelyPolygon(splash_zone_poly_points))
+        shapely_splash_zone_poly_points = ShapelyPolygon(splash_zone_poly_points)
+        if not self.is_in_sand(target_point):
+            geom_p8 = [ ShapelyShape(feat["geometry"]) for feat in self.sand_traps ]
+            total_overlap = 0
+            for j, g8 in enumerate(geom_p8):
+                if shapely_splash_zone_poly_points.intersects(g8):
+                    total_overlap += shapely_splash_zone_poly_points.intersection(g8).area
+            return total_overlap/shapely_splash_zone_poly_points <= 0.3
+
+        return self.shapely_poly.contains(shapely_splash_zone_poly_points)
 
     def numpy_adjacent_and_dist(self, point: Tuple[float, float], conf: float):
         cloc_distances = cdist(self.np_map_points, np.array([np.array(point)]), 'euclidean')
