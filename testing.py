@@ -3,8 +3,15 @@ import sys
 import subprocess
 import json
 
-maps = ["./maps/default/simple_with_sandtraps.json", "./maps/default/simple.json", "./maps/default/step.json", "./maps/default/zig.json"]
+maps = []
 skills = [30, 60, 90]
+groups = ["g2"]
+for group in groups:
+    for (dirpath, dirnames, filenames) in os.walk(os.path.join("./maps", group)):
+        for file in filenames:
+            if file.endswith(".json"):
+                maps.append(os.path.join(dirpath, file))
+        break
 
 
 def main():
@@ -15,7 +22,7 @@ def main():
         print("Map: " + map)
         for skill in skills:
             print("Skill: " + str(skill))
-            res = subprocess.check_output(['python3', './main.py', '-nb', '-ng', '--skill', str(skill),  '-p', "2", '--map', map]).decode('utf-8').replace("'", '"').replace("(", '').replace(")", '')
+            res = subprocess.check_output(['python3', './main.py', '-ng', '-nb', '--skill', str(skill),  '-p', "2", '--map', map]).decode('utf-8').replace("'", '"').replace("(", '').replace(")", '')
             jsonResults = json.loads(res)
             if (jsonResults['player_states'][0] == "S"):
                 if (len(jsonResults["player_states"]) > 1):

@@ -17,8 +17,8 @@ from scipy.spatial.distance import cdist
 # Cached distribution
 DIST = scipy_stats.norm(0, 1)
 SAND_DIST = scipy_stats.norm(0, 2)
-X_STEP = 10
-Y_STEP = 10
+X_STEP = 5.0
+Y_STEP = 5.0
 
 
 @functools.lru_cache()
@@ -49,7 +49,6 @@ def spread_points(current_point, angles: np.array, distance, reverse) -> np.arra
 def splash_zone(distance: float, angle: float, conf: float, skill: int, current_point: Tuple[float, float], current_point_in_sand: bool) -> np.array:
     conf_points = np.linspace(1 - conf, conf, 5)
 
-    #ADDED
     if (current_point_in_sand):
         distances = np.vectorize(sand_standard_ppf)(conf_points) * (distance / skill) + (distance/2)
         angles = np.vectorize(sand_standard_ppf)(conf_points) * (1/(2*skill)) + angle
@@ -204,8 +203,6 @@ class Player:
         if self.skill < 40:
             self.conf = 0.75
 
-        ## ADDED
-
         self.map_points_is_sand = {}
         self.sand_traps = [sympy_poly_to_shapely(sympy_poly) for sympy_poly in sand_traps]
 
@@ -245,7 +242,6 @@ class Player:
         if type(target_point) == Point2D:
             target_point = tuple(Point2D)
 
-        # ADDED
         this_in_sand = self.is_in_sand(current_point)
 
         distance = np.linalg.norm(np.array(current_point).astype(float) - np.array(target_point).astype(float)) * (2 if this_in_sand else 1)
@@ -254,11 +250,13 @@ class Player:
         angle = np.arctan2(float(ty) - float(cy), float(tx) - float(cx))
         splash_zone_poly_points = splash_zone(float(distance), float(angle), float(conf), self.skill, current_point, this_in_sand)
         shapely_splash_zone_poly_points = ShapelyPolygon(splash_zone_poly_points)
-        if not self.is_in_sand(target_point):
-            total_overlap = sum([shapely_splash_zone_poly_points.intersection(sand_trap).area for sand_trap in self.sand_traps if shapely_splash_zone_poly_points.intersects(self.shapely_poly)])
-            return total_overlap/shapely_splash_zone_poly_points.area <= 1 - conf
 
-        return self.shapely_poly.contains(shapely_splash_zone_poly_points)
+        if self.shapely_poly.contains(shapely_splash_zone_poly_points):
+            if not self.is_in_sand(target_point):
+                total_overlap = sum([shapely_splash_zone_poly_points.intersection(sand_trap).area for sand_trap in self.sand_traps if shapely_splash_zone_poly_points.intersects(self.shapely_poly)])
+                return total_overlap/shapely_splash_zone_poly_points.area <= 1 - conf
+            return True
+        return False
 
     def numpy_adjacent_and_dist(self, point: Tuple[float, float], conf: float):
         cloc_distances = cdist(self.np_map_points, np.array([np.array(point)]), 'euclidean')
@@ -333,7 +331,6 @@ class Player:
         self.np_goal_dist = cdist(self.np_map_points, np.array([np.array(self.goal)]), 'euclidean')
         self.np_goal_dist = self.np_goal_dist.flatten()
 
-    #ADDED encloses vs encloses_point??? can speed up using mpl instead of point2d?
     def is_in_sand(self, point: sympy.geometry.Point2D):
         if (type(point) == np.ndarray):
             point = Point2D(point[0], point[1])
@@ -389,7 +386,7 @@ class Player:
             # Unit vector pointing from current to target
             u = v / original_dist
             if original_dist >= 20.0 or self.current_shot_in_sand:
-                roll_distance = original_dist / 20 ##?????
+                roll_distance = original_dist /  20
                 max_offset = roll_distance
                 offset = 0
                 prev_target = target_point
