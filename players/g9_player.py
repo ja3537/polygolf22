@@ -11,6 +11,7 @@ import math
 from typing import Tuple
 from collections import defaultdict
 import time
+from scipy.spatial import distance
 
 DEBUG_MSG = False
 
@@ -438,6 +439,21 @@ class Player:
                 return True
         return False
 
+    def get_heuristic(self, x, y):
+        point = Point(x, y)
+        dist = distance.euclidean(point, self.end_pt)
+
+        max_dist = 200 + self.skill
+        heuristic = 0
+        if self.in_sand_trap(point):
+            heuristic = ((dist - max_dist / 2) / max_dist) + 1
+        else:
+            heuristic = dist / max_dist
+
+        print("Euc Dist: {}, Heuristic: {}".format(dist, heuristic))
+        return heuristic
+
+
 
 
     def play(self, score: int, golf_map: sympy.Polygon, target: sympy.geometry.Point2D, sand_traps: List[sympy.geometry.Point2D], curr_loc: sympy.geometry.Point2D, prev_loc: sympy.geometry.Point2D, prev_landing_point: sympy.geometry.Point2D, prev_admissible: bool) -> Tuple[float, float]:
@@ -460,6 +476,12 @@ class Player:
         print("Testing")
         print(self.start_pt)
 
+    
+        self.get_heuristic(curr_loc[0], curr_loc[1])
+        self.get_heuristic(400, 400)
+
+
         for trap in self.sand_traps:
             print("Trap : ")
             print(trap)
+
