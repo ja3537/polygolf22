@@ -3,6 +3,7 @@ import sympy
 import logging
 from typing import Tuple, List
 from shapely.geometry import Polygon, Point, LineString
+from shapely.validation import make_valid
 import skgeom as sg
 from skgeom.draw import draw
 import matplotlib.pyplot as plt
@@ -289,7 +290,153 @@ class Player:
             print("time for additional_nodes:", time.time() - since)
 
 
+    def construct_edges(self, curr_loc, target, only_construct_from_source=False):
+        """Function which creates edges for every node with each other under the following conditions:
+            - distance between two nodes < skill_dist_range
+            - if the node is <20m from target, there cannot be water in the way.
 
+        Args:
+            curr_loc (sympy.geometry.Point2D): Current location
+            target (sympy.geometry.Point2D): Target location
+        """
+
+        """Graph Creation: Edges
+        - In short, we construct directional Edge e: (n1, n2) if our skill level allows us to reach n2 from n1
+        - For edges going from:
+            - the Node containing the current position:
+            use the exact coordinate for the current position as the origin of our circular range
+            - a Node that doesn’t contain the current position:
+            use the midpoint of that Node (not the midpoint of some unit grid within the Node) as the origin of our
+            circular range
+        """
+        since = time.time()
+        source_completed = False
+        skill_dist_range = 200 + self.skill
+        epsilon = 0.01
+
+        # 2. Connect every node
+        for from_node in self.graph.keys():
+            # constructing an Edge from curr_loc to another non-curr_loc Node
+            if from_node == 'curr_loc':
+                # clear existing adjacency list of this from_node
+                self.graph[from_node] = []
+
+                for to_node in self.graph.keys():
+                    if to_node == from_node:  # 'curr_loc' can't have an Edge with itself
+                        continue
+
+                    if to_node == (float(target.x), float(target.y)):
+                        if self._euc_dist((int(curr_loc.x), int(curr_loc.y)), to_node) <= 20:
+                            line = LineString([(int(curr_loc.x), int(curr_loc.y)), to_node])
+                            # i. If yes, calculate bank_distance for this edge
+                            if self.shapely_edges.intersects(line):
+                                continue
+                            else:
+                                risk = self.calculate_risk((curr_loc[0], curr_loc[1]), to_node)
+                                self.graph[from_node].append([to_node, risk])
+
+                    elif self._euc_dist((int(curr_loc.x), int(curr_loc.y)), to_node) <= skill_dist_range:
+                        risk = self.calculate_risk((curr_loc[0], curr_loc[1]), to_node)
+                        self.graph[from_node].append([to_node, risk])
+
+                source_completed = True
+
+            # constructing an Edge from a non-curr_loc Node to another non-curr_loc Node
+            else:
+                if only_construct_from_source and source_completed:  # if only constructing from source, skip this part
+                    break
+
+                # clear existing adjacency list of this from_node
+                self.graph[from_node] = []
+
+                for to_node in self.graph.keys():
+                    # never treat 'curr_loc' as a destination Node; from_node and to_node need to be different
+                    if to_node == 'curr_loc' or to_node == from_node:
+                        continue
+
+                    if to_node == (float(target.x), float(target.y)):
+                        if self._euc_dist(from_node, to_node) <= 20:
+                            line = LineString([from_node, to_node])
+                            # i. If yes, calculate bank_distance for this edge
+                            if self.shapely_edges.intersects(line):
+                                continue
+                            else:
+                                risk = self.calculate_risk(from_node, to_node)
+                                self.graph[from_node].append([to_node, risk])
+
+                    elif self._euc_dist(from_node, to_node) <= skill_dist_range:
+                        risk = self.calculate_risk(from_node, to_node)
+                        self.graph[from_node].append([to_node, risk])
+
+        if DEBUG_MSG:
+            print("time for construct_edges:", time.time() - since)
+
+    def calculate_risk(self, start, end):
+        angle = math.atan2(end[1] - start[1], end[0] - start[0])
+        distance = self._euc_dist(start, end)
+
+        dist_deviation = distance/self.skill
+        angle_deviation = 2/(2*self.skill)
+
+        max_dist = (distance + dist_deviation)
+        min_dist = (distance - dist_deviation)/1.1
+        max_angle = angle + angle_deviation
+        min_angle = angle - angle_deviation
+
+        #p1 = sg.Point2(start[0]+(max_dist)*math.cos(angle), start[1]+(max_dist)*math.sin(angle))
+        p1 = Point(start[0]+(max_dist)*math.cos(angle), start[1]+(max_dist)*math.sin(angle))
+
+        #p4 = sg.Point2(start[0]+(min_dist)*math.cos(angle), start[1]+(min_dist)*math.sin(angle))
+        p4 = Point(start[0]+(min_dist)*math.cos(angle), start[1]+(min_dist)*math.sin(angle))
+
+        #p2 = sg.Point2(start[0]+(max_dist)*math.cos(max_angle), start[1]+(max_dist)*math.sin(max_angle))
+        p2 = Point(start[0]+(max_dist)*math.cos(max_angle), start[1]+(max_dist)*math.sin(max_angle))
+
+        #p6 = sg.Point2(start[0]+(max_dist)*math.cos(min_angle), start[1]+(max_dist)*math.sin(min_angle))
+        p6 = Point(start[0]+(max_dist)*math.cos(min_angle), start[1]+(max_dist)*math.sin(min_angle))
+
+        #p3 = sg.Point2(start[0]+(min_dist)*math.cos(max_angle), start[1]+(min_dist)*math.sin(max_angle))
+        p3 = Point(start[0]+(min_dist)*math.cos(max_angle), start[1]+(min_dist)*math.sin(max_angle))
+
+        #p5 = sg.Point2(start[0]+(min_dist)*math.cos(min_angle), start[1]+(min_dist)*math.sin(min_angle))
+        p5 = Point(start[0]+(min_dist)*math.cos(min_angle), start[1]+(min_dist)*math.sin(min_angle))
+        points = [p1]
+        if p2 not in points:
+            points.append(p2)
+        if p3 not in points:
+            points.append(p3)
+        if p4 not in points:
+            points.append(p4)
+        if p5 not in points:
+            points.append(p5)
+        if p6 not in points:
+            points.append(p6)
+
+        #if p1 in [p2, p3, p4, p5, p6] or p2 in [p3, p4, p5, p6] or p3 in [p4, p5, p6] or p4 in [p5, p6] or p5 == p6:
+        #    return 1
+        if len(points) < 3:
+            return 1
+        #print(len(points))
+        #cone = sg.Polygon(points)
+        cone = Polygon(points)
+        cone = make_valid(cone)
+        #cone_area = cone.area()
+        cone_area = cone.area
+
+        #intersect = sg.boolean_set.intersect(cone, self.scikit_poly)
+        intersect = self.shapely_poly.intersection(cone).area
+
+        if cone_area == 0:
+            return 1
+        return intersect/cone_area
+
+
+    def in_sand_trap(self, x, y):
+        point = Point(x, y)
+        for trap in self.sand_traps:
+            if trap.contains(point):
+                return True
+        return False
 
 
 
@@ -316,11 +463,3 @@ class Player:
         for trap in self.sand_traps:
             print("Trap : ")
             print(trap)
-
-
-    def in_sand_trap(self, x, y):
-        point = Point(x, y)
-        for trap in self.sand_traps:
-            if trap.contains(point):
-                return True
-        return False
