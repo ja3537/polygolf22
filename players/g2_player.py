@@ -214,7 +214,7 @@ class Player:
                 gx, gy = float(target.x), float(target.y)
                 self.goal = float(target.x), float(target.y)
                 self._initialize_map_points((gx, gy), golf_map)
-                print("done init map")
+                print(f"done init map with {len(self.np_map_points)} points")
 
 
     @functools.lru_cache()
@@ -359,7 +359,7 @@ class Player:
             self._initialize_map_points((gx, gy), golf_map) ## initrialize at runtime? multi thread it?
 
         # Optimization to retry missed shots
-        if self.prev_rv is not None and curr_loc == prev_loc:
+        if not prev_admissible and self.prev_rv is not None:
             return self.prev_rv
 
         self.current_shot_in_sand = self.is_in_sand(curr_loc)
@@ -382,7 +382,7 @@ class Player:
             v = np.array(target_point) - current_point
             # Unit vector pointing from current to target
             u = v / original_dist
-            if original_dist >= 20.0:
+            if original_dist >= 20.0 or self.current_shot_in_sand:
                 roll_distance = original_dist / 20 ##?????
                 max_offset = roll_distance
                 offset = 0
@@ -398,7 +398,7 @@ class Player:
         tx, ty = target_point
         angle = np.arctan2(ty - cy, tx - cx)
 
-        rv = curr_loc.distance(Point2D(target_point, evaluate=False)), angle
+        rv = curr_loc.distance(Point2D(target_point, evaluate=False)) * (2 if self.current_shot_in_sand else 1), angle
         self.prev_rv = rv
         return rv
 
