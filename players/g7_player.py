@@ -199,6 +199,19 @@ class Player:
         angle = np.arctan2(float(ty) - float(cy), float(tx) - float(cx))
         
         return np.linalg.norm(distance) <= self._max_ddist_ppf(conf)
+
+    def is_splash_zone_within_polygon(self, current_point: Tuple[float, float], target_point: Tuple[float, float], conf: float) -> bool:
+        if type(current_point) == Point2D: current_point = tuple(Point2D)
+        if type(target_point) == Point2D: target_point = tuple(Point2D)
+
+        distance = np.linalg.norm(np.array(current_point).astype(float) - np.array(target_point).astype(float))
+        cx, cy = float(current_point[0]), float(current_point[1])
+        tx, ty = float(target_point[0]), float(target_point[1])
+        angle = np.arctan2(ty - cy, tx - cx)
+
+        splash_zone_polygon_points = splash_zone(float(distance), float(angle), float(conf), self.skill, current_point)
+        return self.shapely_polygon.contains(ShapelyPolygon(splash_zone_polygon_points))
+
         
     def play(self, score: int, golf_map: sympy.Polygon, target: sympy.geometry.Point2D, sand_traps: list[sympy.geometry.Point2D], curr_loc: sympy.geometry.Point2D, prev_loc: sympy.geometry.Point2D, prev_landing_point: sympy.geometry.Point2D, prev_admissible: bool) -> Tuple[float, float]:
         """Function which based on current game state returns the distance and angle, the shot must be played
