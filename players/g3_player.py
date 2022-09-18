@@ -8,8 +8,10 @@ import logging
 from typing import Tuple, List
 import matplotlib.pyplot as plt
 
+POINTS_PER_REGION = 25
+
 class Player:
-    def __init__(self, skill: int, rng: np.random.Generator, logger: logging.Logger, golf_map: sympy.Polygon, start: sympy.geometry.Point2D, target: sympy.geometry.Point2D, sand_traps: list[sympy.geometry.Point2D], map_path: str, precomp_dir: str) -> None:
+    def __init__(self, skill: int, rng: np.random.Generator, logger: logging.Logger, golf_map: sympy.Polygon, start: sympy.geometry.Point2D, target: sympy.geometry.Point2D, sand_traps: list[sympy.Polygon], map_path: str, precomp_dir: str) -> None:
         """Initialise the player with given skill.
 
         Args:
@@ -28,10 +30,11 @@ class Player:
         self.logger = logger
 
         self.shapely_map = shapely.geometry.Polygon(golf_map.vertices)
-        self.split_polygon(self.shapely_map, 20)
+        self.shapely_sand_traps = [shapely.geometry.Polygon(st.vertices) for st in sand_traps]
+        self.split_polygon(self.shapely_map, self.shapely_sand_traps, 50)
 
 
-    def play(self, score: int, golf_map: sympy.Polygon, target: sympy.geometry.Point2D, sand_traps: list[sympy.geometry.Point2D], curr_loc: sympy.geometry.Point2D, prev_loc: sympy.geometry.Point2D, prev_landing_point: sympy.geometry.Point2D, prev_admissible: bool) -> Tuple[float, float]:
+    def play(self, score: int, golf_map: sympy.Polygon, target: sympy.geometry.Point2D, sand_traps: list[sympy.Polygon], curr_loc: sympy.geometry.Point2D, prev_loc: sympy.geometry.Point2D, prev_landing_point: sympy.geometry.Point2D, prev_admissible: bool) -> Tuple[float, float]:
         """Function which based n current game state returns the distance and angle, the shot must be played
 
         Args:
@@ -55,12 +58,13 @@ class Player:
         angle = sympy.atan2(target.y - curr_loc.y, target.x - curr_loc.x)
         return (distance, angle)
 
-    def split_polygon(self, golf_map: sympy.Polygon, regions: int) -> List[shapely.geometry.Polygon]:
+    def split_polygon(self, golf_map: sympy.Polygon, sand_traps: List[shapely.geometry.Polygon], regions: int) -> List[shapely.geometry.Polygon]:
         """ Split a given Golf Map into regions of roughly equal size.
         Based on an algorithm described by Paul Ramsey: http://blog.cleverelephant.ca/2018/06/polygon-splitting.html
 
         Args:
-            golf_map (shapely.geometry.Plygon): The Golf Map to split into equal sized regions
+            golf_map (shapely.geometry.Polygon): The Golf Map to split into equal sized regions
+            sand_traps (shapely.geometry.Polygon): A list of Sand Traps contained within the Golf Map 
             regions (int): The number of roughly equal sized regions to split the map into
 
         Returns:
@@ -68,13 +72,16 @@ class Player:
 
         """
 
+        # Naively insert holes into the given map where there are sand traps
+        golf_map_with_holes = shapely.geometry.Polygon(golf_map.exterior.coords, [list(st.exterior.coords) for st in sand_traps])
+
         # Generate random points within the bounds of the given map
         # (based on https://gis.stackexchange.com/questions/207731/generating-random-coordinates-in-multipolygon-in-python)
         points = []
-        min_x, min_y, max_x, max_y = golf_map.bounds
-        while len(points) < 25*regions:
+        min_x, min_y, max_x, max_y = golf_map_with_holes.bounds
+        while len(points) < POINTS_PER_REGION*regions:
             pt = shapely.geometry.Point(random.uniform(min_x, max_x), random.uniform(min_y, max_y))
-            if golf_map.contains(pt):
+            if golf_map_with_holes.contains(pt):
                 points.append(pt)
 
         # Cluster the random points into groups using kmeans
@@ -86,10 +93,10 @@ class Player:
         regions = shapely.ops.voronoi_diagram(center_points)
 
         # Intersect the generated regions with the given map
-        regions = [region.intersection(golf_map) for region in regions]
+        regions = [region.intersection(golf_map_with_holes) for region in regions.geoms]
 
         # Plot the random points, cluster centers, and voronoi regions
-        plt.plot(*golf_map.exterior.xy)
+        plt.plot(*golf_map_with_holes.exterior.xy)
         plt.scatter([pt.x for pt in points], [pt.y for pt in points], s=5)
         plt.scatter([pt[0] for pt in kmeans.cluster_centers_], [pt[1] for pt in kmeans.cluster_centers_], color='red')
         for region in regions:
