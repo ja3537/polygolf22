@@ -56,6 +56,30 @@ def sympy_polygon_to_shapely(polygon: sympy.Polygon) -> ShapelyPolygon:
     vertices.append(vertices[0])
     return ShapelyPolygon(vertices)
 
+def sympy_tri_to_shapely(sympy_tri: Triangle) -> ShapelyPolygon:
+    """Helper function to convert sympy Polygon to shapely Polygon object"""
+    v = sympy_tri.vertices
+    l = []
+    for i in v:
+        l.append(Point2D(i[0],i[1]))
+    l.append(Point2D(v[0][0],v[0][1]))
+    return ShapelyPolygon(l)
+
+def sympy_polygon_to_mpl(sympy_poly: Polygon) -> Path:
+    """Helper function to convert sympy Polygon to matplotlib Path object"""
+    v = sympy_poly.vertices
+    v.append(v[0])
+    return Path(v, closed=True)
+
+
+def sympy_tri_to_mpl(sympy_tri: Triangle) -> Path:
+    """Helper function to convert sympy Polygon to matplotlib Path object"""
+    v = sympy_tri.vertices
+    l = []
+    for i in v:
+        l.append(Point2D(i[0],i[1]))
+    l.append(Point2D(v[0][0],v[0][1]))
+    return Path(l, closed=True)
 
 def spread_points(current_point, angles: np.array, distance, reverse) -> np.array:
     curr_x, curr_y = current_point
@@ -214,14 +238,16 @@ class Player:
         trap_points = []
         self.shapely_polygon = sympy_polygon_to_shapely(golf_map)
         for trap in sand_traps:
-            self.shapely_polygon_trap = sympy_polygon_to_shapely(trap)
-            polygon_points = polygon_to_points(trap)
-            for point in polygon_points:
-                if self.shapely_polygon_trap.contains(point):
-                    x, y = point
-                    trap_points.append(np.array([x, y, 1]))
+            for trap in sand_traps:
+                self.shapely_polygon_trap = sympy_tri_to_shapely(trap)
+                self.mpl_polygon_trap = sympy_tri_to_mpl(trap)
+                polygon_points = list(polygon_to_points(trap))
+                for point in polygon_points:
+                    if self.mpl_polygon_trap.contains_point(point):
+                        x, y = point
+                        trap_points.append(np.array([x,y]))
             # trap_points.append(polygon_to_points(trap))
-
+            
         polygon_points = polygon_to_points(golf_map)
         for point in polygon_points:
             if self.shapely_polygon.contains(point) not in trap_points:
@@ -275,14 +301,10 @@ class Player:
         Returns:
         Tuple[float, float]: Return a tuple of distance and angle in radians to play the shot
         """
-
-        required_dist = curr_loc.distance(target)
-        roll_factor = 1.1
-        if required_dist < 20:
-            roll_factor = 1.0
-        distance = sympy.Min(200+self.skill, required_dist/roll_factor)
-        angle = sympy.atan2(target.y - curr_loc.y, target.x - curr_loc.x)
-        return (distance, angle)
+        # if self.np_points is None:
+        #         gx, gy = float(target.x), float(target.y)
+        #         self.goal = float(target.x), float(target.y)
+        #         self.polygon_to_np_points((gx, gy), golf_map, sand_traps)
 
     # Functions from group 9 that are needed for precompute ###################
     def get_center(self, row: int, column: int) -> Point:
