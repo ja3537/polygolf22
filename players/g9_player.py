@@ -3,7 +3,6 @@ import sympy
 import logging
 from typing import Tuple, List
 from shapely.geometry import Polygon, Point, LineString
-<<<<<<< Updated upstream
 from shapely.validation import make_valid
 import skgeom as sg
 from skgeom.draw import draw
@@ -15,7 +14,6 @@ import time
 from scipy.spatial import distance
 
 DEBUG_MSG = False
-=======
 from scipy.spacial import distance
 import queue
 
@@ -34,7 +32,6 @@ class Frontier():
 
     def __eq__(self, other):
         return self.position == other.position
->>>>>>> Stashed changes
 
 class Player:
     def __init__(self, skill: int, rng: np.random.Generator, logger: logging.Logger, golf_map: sympy.Polygon, start: sympy.geometry.Point2D, target: sympy.geometry.Point2D, sand_traps: List[sympy.geometry.Point2D], map_path: str, precomp_dir: str) -> None:
