@@ -129,8 +129,6 @@ def poly_to_points(poly: Polygon) -> Iterator[Tuple[float, float]]:
 def sympy_poly_to_mpl(sympy_poly: Polygon) -> Path:
     """Helper function to convert sympy Polygon to matplotlib Path object"""
     v = list(sympy_poly.vertices)
-    print("printing v ---------------------")
-    print(v)
     v.append(v[0])
     return Path(v, closed=True)
 
