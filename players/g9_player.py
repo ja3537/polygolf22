@@ -1,40 +1,153 @@
+import os
+import pickle
 import numpy as np
+import functools
 import sympy
 import logging
-from typing import Tuple, List
-from shapely.geometry import Polygon, Point, LineString
-from shapely.validation import make_valid
-import skgeom as sg
-from skgeom.draw import draw
-import matplotlib.pyplot as plt
-import math
-from typing import Tuple
-from collections import defaultdict
-import time
-from scipy.spatial import distance
+import heapq
+from scipy import stats as scipy_stats
 
-DEBUG_MSG = False
-from scipy.spacial import distance
-import queue
+from typing import Tuple, Iterator, List, Union
+from sympy.geometry import Polygon, Point2D
+from matplotlib.path import Path
+from shapely.geometry import Polygon as ShapelyPolygon, Point as ShapelyPoint
+from scipy.spatial.distance import cdist
 
-@dataclass(order=True)
-class PrioritizedItem:
-    priority: float
-    item: Any=field(compare=False)
+# Cached distribution
+DIST = scipy_stats.norm(0, 1)
+X_STEP = 5.0
+Y_STEP = 5.0
 
-class Frontier():
-    def __init__(self, x_y:tuple):
-        self.pq = queue.PriorityQueue()
-        cost = 1 + get_heuristic(x_y[0], x_y[1])
-        
-        self.setPQ = set()
-        self.setPQ.add(self.pq.put(PrioritizedItem(cost, x_y)))
+
+@functools.lru_cache()
+def standard_ppf(conf: float) -> float:
+    return DIST.ppf(conf)
+
+
+def result_point(distance: float, angle: float, current_point: Tuple[float, float]) -> Tuple[float, float]:
+    cx, cy = current_point
+    nx = cx + distance * np.cos(angle)
+    ny = cy + distance * np.sin(angle)
+    return nx, ny
+
+
+def spread_points(current_point, angles: np.array, distance, reverse) -> np.array:
+    curr_x, curr_y = current_point
+    if reverse:
+        angles = np.flip(angles)
+    xs = np.cos(angles) * distance + curr_x
+    ys = np.sin(angles) * distance + curr_y
+    return np.column_stack((xs, ys))
+
+
+def splash_zone(distance: float, angle: float, conf: float, skill: int, current_point: Tuple[float, float]) -> np.array:
+    conf_points = np.linspace(1 - conf, conf, 5)
+    distances = np.vectorize(standard_ppf)(conf_points) * (distance / skill) + distance
+    angles = np.vectorize(standard_ppf)(conf_points) * (1 / (2 * skill)) + angle
+    scale = 1.1
+    if distance <= 20:
+        scale = 1.0
+    max_distance = distances[-1] * scale
+    top_arc = spread_points(current_point, angles, max_distance, False)
+
+    if distance > 20:
+        min_distance = distances[0]
+        bottom_arc = spread_points(current_point, angles, min_distance, True)
+        return np.concatenate((top_arc, bottom_arc, np.array([top_arc[0]])))
+
+    current_point = np.array([current_point])
+    return np.concatenate((current_point, top_arc, current_point))
+
+
+def poly_to_points(poly: Polygon) -> Iterator[Tuple[float, float]]:
+    x_min, y_min = float('inf'), float('inf')
+    x_max, y_max = float('-inf'), float('-inf')
+    for point in poly.vertices:
+        x = float(point.x)
+        y = float(point.y)
+        x_min = min(x, x_min)
+        x_max = max(x, x_max)
+        y_min = min(y, y_min)
+        y_max = max(y, y_max)
+    x_step = X_STEP
+    y_step = Y_STEP
+
+    x_current = x_min
+    y_current = y_min
+    while x_current < x_max:
+        while y_current < y_max:
+            yield float(x_current), float(y_current)
+            y_current += y_step
+        y_current = y_min
+        x_current += x_step
+
+
+def sympy_poly_to_mpl(sympy_poly: Polygon) -> Path:
+    """Helper function to convert sympy Polygon to matplotlib Path object"""
+    v = sympy_poly.vertices
+    v.append(v[0])
+    return Path(v, closed=True)
+
+
+def sympy_poly_to_shapely(sympy_poly: Polygon) -> ShapelyPolygon:
+    """Helper function to convert sympy Polygon to shapely Polygon object"""
+    v = sympy_poly.vertices
+    v.append(v[0])
+    return ShapelyPolygon(v)
+
+
+class ScoredPoint:
+    """Scored point class for use in A* search algorithm"""
+
+    def __init__(self, point: Tuple[float, float], goal: Tuple[float, float], actual_cost=float('inf'), previous=None,
+                 goal_dist=None, skill=50):
+        self.point = point
+        self.goal = goal
+
+        self.previous = previous
+
+        self._actual_cost = actual_cost
+        if goal_dist is None:
+            a = np.array(self.point)
+            b = np.array(self.goal)
+            goal_dist = np.linalg.norm(a - b)
+
+        max_target_dist = 200 + skill
+        max_dist = standard_ppf(0.99) * (max_target_dist / skill) + max_target_dist
+        max_dist *= 1.10
+        self._h_cost = goal_dist / max_dist
+
+        self._f_cost = self.actual_cost + self.h_cost
+
+    @property
+    def f_cost(self):
+        return self._f_cost
+
+    @property
+    def h_cost(self):
+        return self._h_cost
+
+    @property
+    def actual_cost(self):
+        return self._actual_cost
+
+    def __lt__(self, other):
+        return self.f_cost < other.f_cost
 
     def __eq__(self, other):
-        return self.position == other.position
+        return self.point == other.point
+
+    def __hash__(self):
+        return hash(self.point)
+
+    def __repr__(self):
+        return f"ScoredPoint(point = {self.point}, h_cost = {self.h_cost})"
+
 
 class Player:
-    def __init__(self, skill: int, rng: np.random.Generator, logger: logging.Logger, golf_map: sympy.Polygon, start: sympy.geometry.Point2D, target: sympy.geometry.Point2D, sand_traps: List[sympy.geometry.Point2D], map_path: str, precomp_dir: str) -> None:
+    def __init__(self, skill: int, rng: np.random.Generator, logger: logging.Logger, golf_map: sympy.Polygon,
+                 start: sympy.geometry.Point2D, target: sympy.geometry.Point2D,
+                 sand_traps: List[sympy.geometry.Point2D], map_path: str, precomp_dir: str) -> None:
         """Initialise the player with given skill.
 
         Args:
@@ -47,434 +160,153 @@ class Player:
             map_path (str): File path to map
             precomp_dir (str): Directory path to store/load precomputation
         """
+        # # if depends on skill
+        # precomp_path = os.path.join(precomp_dir, "{}_skill-{}.pkl".format(map_path, skill))
+        # # if doesn't depend on skill
+        # precomp_path = os.path.join(precomp_dir, "{}.pkl".format(map_path))
+
+        # # precompute check
+        # if os.path.isfile(precomp_path):
+        #     # Getting back the objects:
+        #     with open(precomp_path, "rb") as f:
+        #         self.obj0, self.obj1, self.obj2 = pickle.load(f)
+        # else:
+        #     # Compute objects to store
+        #     self.obj0, self.obj1, self.obj2 = _
+
+        #     # Dump the objects
+        #     with open(precomp_path, 'wb') as f:
+        #         pickle.dump([self.obj0, self.obj1, self.obj2], f)
         self.skill = skill
         self.rng = rng
         self.logger = logger
-
-
-        self.shapely_poly = Polygon([(p.x, p.y) for p in golf_map.vertices])
-        self.shapely_edges = LineString(list(self.shapely_poly.exterior.coords))
-        self.start_pt = Point(start[0], start[1])
-        self.end_pt = Point(target[0], target[1])
-
-
-        self.sand_traps = []
-        for trap in sand_traps:
-            self.sand_traps.append(Polygon([(p.x, p.y) for p in trap.vertices]))
-
-
-
-        #skeleton and critical points
-        self.graph = {}  # self.graph[node_i] contains a list of edges where each edge_j = (node_j, heuristic, f_count)
-        # self.all_nodes_center = {}
-        self.critical_pts = []
-        self.scikit_poly = sg.Polygon([(p.x, p.y) for p in golf_map.vertices])
-        skel = sg.skeleton.create_interior_straight_skeleton(self.scikit_poly)
-        self.draw_skeleton(self.scikit_poly, skel)
-        self.construct_nodes(target)
-        if DEBUG_MSG:
-            draw(self.scikit_poly)
-            for v in self.graph.keys():
-                plt.plot(v[0], v[1], 'bo')
-            plt.savefig('skel.png')
-
-        self.construct_land_bridges(start)
-        if DEBUG_MSG:
-            draw(self.scikit_poly)
-            for v in self.graph.keys():
-                plt.plot(v[0], v[1], 'bo')
-            plt.savefig('land.png')
-
-        self.construct_more_nodes(start)
-        if DEBUG_MSG:
-            draw(self.scikit_poly)
-            for v in self.graph.keys():
-                plt.plot(v[0], v[1], 'bo')
-            plt.savefig('more.png')
-
-        if self.needs_edge_init:
-            self.construct_edges(start, target, only_construct_from_source=False)
-            self.needs_edge_init = False
-
-    def draw_skeleton(self, polygon, skeleton, show_time=False):
-        draw(polygon)
-        self.critical_pts = []
-        for v in skeleton.vertices:
-            if v.point not in polygon.vertices:
-                self.critical_pts.append([float(v.point.x()), float(v.point.y())])
-
-        out_count = 0
-        for point in self.critical_pts:
-            if not self.shapely_poly.contains(Point(point[0], point[1])):
-                out_count += 1
-        # print("out count: ", str(out_count))
-        if out_count:
-            skel = sg.skeleton.create_exterior_straight_skeleton(self.scikit_poly, 0.1)
-            self.draw_skeleton(self.scikit_poly, skel)
-
-    def validate_node(self, x, y, step):
-        """ Function which determines if a node of size step x step centered at (x, y) is a valid node in our
-        self.shapely_poly
-
-        Args:
-            x (float): x-coordinate of node
-            y (float): y-coordinate of node
-            step (float): size of node
-
-        Returns:
-            Boolean: True if node is valid in our map
-         """
-
-        # 1. Node center must be inside graph
-        valid_edge = 0
-        if self.shapely_poly.contains(Point(x, y)):
-            # 2. 7/8 points on edge of node must be in graph (we'll count as 8/9, including center)
-            for i in np.arange(y - (step / 2), y + step, step / 2):
-                for j in np.arange(x - (step / 2), x + step, step / 2):
-                    if self.shapely_poly.contains(Point(j, i)):
-                        valid_edge += 1
-            # return True
-        if valid_edge >= 8:
-            return True
-        else:
-            return False
-
-    def construct_nodes(self, target):
-        """Function which creates a graph on self.graph with critical points, curr_loc, and target
-
-        Args:
-            target (sympy.geometry.Point2D): Target location
-        """
-        since = time.time()
-        self.graph = {'curr_loc': []}
-
-        for point in self.critical_pts:
-            if self.shapely_poly.contains(Point(point[0], point[1])):
-                self.graph[(point[0], point[1])] = []
-        # add target point as node
-        self.graph[(float(target.x), float(target.y))] = []
-
-        if DEBUG_MSG:
-            print("time for construct_nodes:", time.time() - since)
-
-    def helper_construct_land_bridges(self, from_node, to_node,skill_dist_range,skill_stops,new_nodes):
-        distance = self._euc_dist(from_node, to_node)
-        line = LineString([from_node, to_node])
-
-        if distance >= skill_dist_range and self.shapely_edges.intersects(line) is False:
-            num_stops = math.floor(distance / skill_dist_range)
-            len_stop = distance / (num_stops + skill_stops)
-
-            # delta y
-            d_y = to_node[1] - from_node[1]
-            # delta x
-            d_x = to_node[0] - from_node[0]
-
-            if d_x == 0:
-                theta = np.sign(d_y) * math.pi / 2
-            else:
-                theta = math.atan(d_y / d_x)
-
-            for n in range(num_stops):
-                offset_y = (n + 1) * len_stop * math.sin(theta)
-                offset_x = (n + 1) * len_stop * math.cos(theta)
-
-                stop_point = (from_node[0] + offset_x, from_node[1] + offset_y)
-                if self.shapely_poly.contains(Point(stop_point[0], stop_point[1])):
-                    new_nodes.append(stop_point)
-
-    def construct_land_bridges(self, curr_loc):
-        since = time.time()
-        if len(list(self.shapely_poly.exterior.coords)) < 20:
-            skill_dist_range = 50 # with not enough nodes(<20), build a landbridge every 50 meters
-            if DEBUG_MSG:
-                print("construct_land_bridges :: using constant skill_dist_range of", skill_dist_range)
-        else:
-            skill_dist_range = 200 + self.skill # with enough nodes, build landbridages with max distance
-
-        skill_stops = 2
-        new_nodes = []
-
-        for from_node in self.graph.keys():
-            if from_node == 'curr_loc':
-                for to_node in self.graph.keys():
-                    if to_node != from_node:
-                        self.helper_construct_land_bridges(curr_loc,to_node,skill_dist_range,skill_stops,new_nodes)
-            else:
-                for to_node in self.graph.keys():
-                    if to_node != 'curr_loc' and to_node != from_node:
-                        self.helper_construct_land_bridges(from_node, to_node,skill_dist_range,skill_stops,new_nodes)
-
-        for node in new_nodes:
-            self.graph[node] = []
-        if DEBUG_MSG:
-            print("# nodes after land: " + str(len(self.graph.keys())))
-            print("time for land_bridges:", time.time() - since)
-
-    def helper_construct_more_node(self,from_node,to_node,skill_dist_range,new_nodes):
-        distance = self._euc_dist(from_node, to_node)
-        line = LineString([from_node, to_node])
-        if distance >=  skill_dist_range and self.shapely_edges.intersects(line) is True:
-            # this should be a LineString obj with 2n points
-            intersection = list(self.shapely_edges.intersection(line).geoms)
-            if int(len(intersection) / 2) <= 1:
-                for i in range(int(len(intersection) / 2)):
-                    inter_0 = list(intersection[2 * i].coords)[0]
-                    inter_1 = list(intersection[(2 * i) + 1].coords)[0]
-                    bank_distance = self._euc_dist(inter_0, inter_1)
-                    if bank_distance <= skill_dist_range:
-                        d_y = inter_1[1] - inter_0[1]
-                        # delta x
-                        d_x = inter_1[0] - inter_0[0]
-
-                        if d_x == 0:
-                            theta = np.sign(d_y) * math.pi / 2
-                        else:
-                            theta = math.atan(d_y / d_x)
-                            hyp = distance * 0.2
-                            bridge_0_count = 0
-                            bridge_1_count = 0
-                            while (hyp > distance * 0.01):
-                                offset_y = hyp * math.sin(theta)
-                                offset_x = hyp * math.cos(theta)
-
-                                bridge_0 = (inter_0[0] - offset_x, inter_0[1] - offset_y)
-                                bridge_1 = (inter_1[0] + offset_x, inter_1[1] + offset_y)
-
-                                if self.shapely_poly.contains(Point(bridge_0[0], bridge_0[1])):
-                                    new_nodes.append(bridge_0)
-                                    bridge_0_count += 1
-                                    bridge_dist_0 = self._euc_dist(from_node, bridge_0)
-                                    if (bridge_dist_0 > skill_dist_range):
-                                        num_stops = math.floor(bridge_dist_0 / skill_dist_range)
-                                        len_stop = distance / (num_stops + 1)
-                                        for n in range(num_stops):
-                                            offset_y = (n + 1) * len_stop * math.sin(theta)
-                                            offset_x = (n + 1) * len_stop * math.cos(theta)
-
-                                            stop_point = (from_node[0] + offset_x, from_node[1] + offset_y)
-                                            if self.shapely_poly.contains(Point(stop_point[0], stop_point[1])):
-                                                new_nodes.append(stop_point)
-                                if self.shapely_poly.contains(Point(bridge_1[0], bridge_1[1])):
-                                    new_nodes.append(bridge_1)
-                                    bridge_1_count += 1
-                                    bridge_dist_1 = self._euc_dist(bridge_1, to_node)
-                                    if (bridge_dist_1 > skill_dist_range):
-                                        num_stops = math.floor(bridge_dist_1 / skill_dist_range)
-                                        len_stop = distance / (num_stops + 1)
-                                        for n in range(num_stops):
-                                            offset_y = (n + 1) * len_stop * math.sin(theta)
-                                            offset_x = (n + 1) * len_stop * math.cos(theta)
-
-                                            stop_point = (bridge_1[0] + offset_x, bridge_1[1] + offset_y)
-                                            if self.shapely_poly.contains(Point(stop_point[0], stop_point[1])):
-                                                new_nodes.append(stop_point)
-                                hyp = hyp / 2
-
-    def construct_more_nodes(self, curr_loc):
-        """Function that builds 'bridges nodes' nearby polygon edges
-                to provide options for crossing water.
-
-                Args:
-                    curr_loc (sympy.geometry.Point2D): Current location
-                """
-        since = time.time()
-
-        skill_dist_range = 200 + self.skill
-        """ 
-        if (self.skill < 80 and len(list(self.shapely_poly.exterior.coords)) > 20):
-            mod = round((0.0013 * pow(self.skill, 2)) - (0.2 * self.skill) + 9.9)
-            print("mod: ", str(mod)) """
-
-        new_nodes = []
-        for from_node in self.graph.keys():
-            if from_node == 'curr_loc':
-                for to_node in self.graph.keys():
-                    if to_node != from_node:  # 'curr_loc' can't have an Edge with itself
-                        self.helper_construct_more_node(curr_loc,to_node,skill_dist_range,new_nodes)
-            else:
-                for to_node in self.graph.keys():
-                    if to_node != 'curr_loc' and to_node != from_node:
-                        self.helper_construct_more_node(curr_loc, to_node, skill_dist_range, new_nodes)
-
-        # if (self.skill < 80 and len(list(self.shapely_poly.exterior.coords)) > 20):
-        total_nodes = len(new_nodes) + len(self.graph.keys())
-        if (len(new_nodes) > 2 * len(self.graph.keys()) and total_nodes > 300):
-            mod = round(len(new_nodes) / (300 - len(self.graph.keys())))
-            new_nodes = new_nodes[::mod]
-        for node in new_nodes:
-            self.graph[node] = []
-        if DEBUG_MSG:
-            print("# nodes after water: " + str(len(self.graph.keys())))
-            print("time for additional_nodes:", time.time() - since)
-
-
-    def construct_edges(self, curr_loc, target, only_construct_from_source=False):
-        """Function which creates edges for every node with each other under the following conditions:
-            - distance between two nodes < skill_dist_range
-            - if the node is <20m from target, there cannot be water in the way.
-
-        Args:
-            curr_loc (sympy.geometry.Point2D): Current location
-            target (sympy.geometry.Point2D): Target location
-        """
-
-        """Graph Creation: Edges
-        - In short, we construct directional Edge e: (n1, n2) if our skill level allows us to reach n2 from n1
-        - For edges going from:
-            - the Node containing the current position:
-            use the exact coordinate for the current position as the origin of our circular range
-            - a Node that doesn’t contain the current position:
-            use the midpoint of that Node (not the midpoint of some unit grid within the Node) as the origin of our
-            circular range
-        """
-        since = time.time()
-        source_completed = False
-        skill_dist_range = 200 + self.skill
-        epsilon = 0.01
-
-        # 2. Connect every node
-        for from_node in self.graph.keys():
-            # constructing an Edge from curr_loc to another non-curr_loc Node
-            if from_node == 'curr_loc':
-                # clear existing adjacency list of this from_node
-                self.graph[from_node] = []
-
-                for to_node in self.graph.keys():
-                    if to_node == from_node:  # 'curr_loc' can't have an Edge with itself
-                        continue
-
-                    if to_node == (float(target.x), float(target.y)):
-                        if self._euc_dist((int(curr_loc.x), int(curr_loc.y)), to_node) <= 20:
-                            line = LineString([(int(curr_loc.x), int(curr_loc.y)), to_node])
-                            # i. If yes, calculate bank_distance for this edge
-                            if self.shapely_edges.intersects(line):
-                                continue
-                            else:
-                                risk = self.calculate_risk((curr_loc[0], curr_loc[1]), to_node)
-                                self.graph[from_node].append([to_node, risk])
-
-                    elif self._euc_dist((int(curr_loc.x), int(curr_loc.y)), to_node) <= skill_dist_range:
-                        risk = self.calculate_risk((curr_loc[0], curr_loc[1]), to_node)
-                        self.graph[from_node].append([to_node, risk])
-
-                source_completed = True
-
-            # constructing an Edge from a non-curr_loc Node to another non-curr_loc Node
-            else:
-                if only_construct_from_source and source_completed:  # if only constructing from source, skip this part
-                    break
-
-                # clear existing adjacency list of this from_node
-                self.graph[from_node] = []
-
-                for to_node in self.graph.keys():
-                    # never treat 'curr_loc' as a destination Node; from_node and to_node need to be different
-                    if to_node == 'curr_loc' or to_node == from_node:
-                        continue
-
-                    if to_node == (float(target.x), float(target.y)):
-                        if self._euc_dist(from_node, to_node) <= 20:
-                            line = LineString([from_node, to_node])
-                            # i. If yes, calculate bank_distance for this edge
-                            if self.shapely_edges.intersects(line):
-                                continue
-                            else:
-                                risk = self.calculate_risk(from_node, to_node)
-                                self.graph[from_node].append([to_node, risk])
-
-                    elif self._euc_dist(from_node, to_node) <= skill_dist_range:
-                        risk = self.calculate_risk(from_node, to_node)
-                        self.graph[from_node].append([to_node, risk])
-
-        if DEBUG_MSG:
-            print("time for construct_edges:", time.time() - since)
-
-    def calculate_risk(self, start, end):
-        angle = math.atan2(end[1] - start[1], end[0] - start[0])
-        distance = self._euc_dist(start, end)
-
-        dist_deviation = distance/self.skill
-        angle_deviation = 2/(2*self.skill)
-
-        max_dist = (distance + dist_deviation)
-        min_dist = (distance - dist_deviation)/1.1
-        max_angle = angle + angle_deviation
-        min_angle = angle - angle_deviation
-
-        #p1 = sg.Point2(start[0]+(max_dist)*math.cos(angle), start[1]+(max_dist)*math.sin(angle))
-        p1 = Point(start[0]+(max_dist)*math.cos(angle), start[1]+(max_dist)*math.sin(angle))
-
-        #p4 = sg.Point2(start[0]+(min_dist)*math.cos(angle), start[1]+(min_dist)*math.sin(angle))
-        p4 = Point(start[0]+(min_dist)*math.cos(angle), start[1]+(min_dist)*math.sin(angle))
-
-        #p2 = sg.Point2(start[0]+(max_dist)*math.cos(max_angle), start[1]+(max_dist)*math.sin(max_angle))
-        p2 = Point(start[0]+(max_dist)*math.cos(max_angle), start[1]+(max_dist)*math.sin(max_angle))
-
-        #p6 = sg.Point2(start[0]+(max_dist)*math.cos(min_angle), start[1]+(max_dist)*math.sin(min_angle))
-        p6 = Point(start[0]+(max_dist)*math.cos(min_angle), start[1]+(max_dist)*math.sin(min_angle))
-
-        #p3 = sg.Point2(start[0]+(min_dist)*math.cos(max_angle), start[1]+(min_dist)*math.sin(max_angle))
-        p3 = Point(start[0]+(min_dist)*math.cos(max_angle), start[1]+(min_dist)*math.sin(max_angle))
-
-        #p5 = sg.Point2(start[0]+(min_dist)*math.cos(min_angle), start[1]+(min_dist)*math.sin(min_angle))
-        p5 = Point(start[0]+(min_dist)*math.cos(min_angle), start[1]+(min_dist)*math.sin(min_angle))
-        points = [p1]
-        if p2 not in points:
-            points.append(p2)
-        if p3 not in points:
-            points.append(p3)
-        if p4 not in points:
-            points.append(p4)
-        if p5 not in points:
-            points.append(p5)
-        if p6 not in points:
-            points.append(p6)
-
-        #if p1 in [p2, p3, p4, p5, p6] or p2 in [p3, p4, p5, p6] or p3 in [p4, p5, p6] or p4 in [p5, p6] or p5 == p6:
-        #    return 1
-        if len(points) < 3:
-            return 1
-        #print(len(points))
-        #cone = sg.Polygon(points)
-        cone = Polygon(points)
-        cone = make_valid(cone)
-        #cone_area = cone.area()
-        cone_area = cone.area
-
-        #intersect = sg.boolean_set.intersect(cone, self.scikit_poly)
-        intersect = self.shapely_poly.intersection(cone).area
-
-        if cone_area == 0:
-            return 1
-        return intersect/cone_area
-
-
-    def in_sand_trap(self, x, y):
-        point = Point(x, y)
-        for trap in self.sand_traps:
-            if trap.contains(point):
-                return True
-        return False
-
-    def get_heuristic(self, x, y):
-        point = Point(x, y)
-        dist = distance.euclidean(point, self.end_pt)
-
+        self.np_map_points = None
+        self.mpl_paly = None
+        self.shapely_poly = None
+        self.goal = None
+        self.prev_rv = None
+
+        # Cached data
         max_dist = 200 + self.skill
-        heuristic = 0
-        if self.in_sand_trap(point):
-            heuristic = ((dist - max_dist / 2) / max_dist) + 1
-        else:
-            heuristic = dist / max_dist
+        self.max_ddist = scipy_stats.norm(max_dist, max_dist / self.skill)
 
-        print("Euc Dist: {}, Heuristic: {}".format(dist, heuristic))
-        return heuristic
+        # Conf level
+        self.conf = 0.95
+        if self.skill < 40:
+            self.conf = 0.75
 
+    @functools.lru_cache()
+    def _max_ddist_ppf(self, conf: float):
+        return self.max_ddist.ppf(1.0 - conf)
 
+    def reachable_point(self, current_point: Tuple[float, float], target_point: Tuple[float, float],
+                        conf: float) -> bool:
+        """Determine whether the point is reachable with confidence [conf] based on our player's skill"""
+        if type(current_point) == Point2D:
+            current_point = tuple(current_point)
+        if type(target_point) == Point2D:
+            target_point = tuple(target_point)
 
+        current_point = np.array(current_point).astype(float)
+        target_point = np.array(target_point).astype(float)
 
-    def play(self, score: int, golf_map: sympy.Polygon, target: sympy.geometry.Point2D, sand_traps: List[sympy.geometry.Point2D], curr_loc: sympy.geometry.Point2D, prev_loc: sympy.geometry.Point2D, prev_landing_point: sympy.geometry.Point2D, prev_admissible: bool) -> Tuple[float, float]:
+        return np.linalg.norm(current_point - target_point) <= self._max_ddist_ppf(conf)
+
+    def splash_zone_within_polygon(self, current_point: Tuple[float, float], target_point: Tuple[float, float],
+                                   conf: float) -> bool:
+        if type(current_point) == Point2D:
+            current_point = tuple(Point2D)
+
+        if type(target_point) == Point2D:
+            target_point = tuple(Point2D)
+
+        distance = np.linalg.norm(np.array(current_point).astype(float) - np.array(target_point).astype(float))
+        cx, cy = current_point
+        tx, ty = target_point
+        angle = np.arctan2(float(ty) - float(cy), float(tx) - float(cx))
+        splash_zone_poly_points = splash_zone(float(distance), float(angle), float(conf), self.skill, current_point)
+        return self.shapely_poly.contains(ShapelyPolygon(splash_zone_poly_points))
+
+    def numpy_adjacent_and_dist(self, point: Tuple[float, float], conf: float):
+        cloc_distances = cdist(self.np_map_points, np.array([np.array(point)]), 'euclidean')
+        cloc_distances = cloc_distances.flatten()
+        distance_mask = cloc_distances <= self._max_ddist_ppf(conf)
+
+        reachable_points = self.np_map_points[distance_mask]
+        goal_distances = self.np_goal_dist[distance_mask]
+
+        return reachable_points, goal_distances
+
+    def next_target(self, curr_loc: Tuple[float, float], goal: Point2D, conf: float) -> Union[
+        None, Tuple[float, float]]:
+        point_goal = float(goal.x), float(goal.y)
+        heap = [ScoredPoint(curr_loc, point_goal, 0.0)]
+        start_point = heap[0].point
+        # Used to cache the best cost and avoid adding useless points to the heap
+        best_cost = {tuple(curr_loc): 0.0}
+        visited = set()
+        points_checked = 0
+        while len(heap) > 0:
+            next_sp = heapq.heappop(heap)
+            next_p = next_sp.point
+
+            if next_p in visited:
+                continue
+            if next_sp.actual_cost > 10:
+                continue
+            if next_sp.actual_cost > 0 and not self.splash_zone_within_polygon(next_sp.previous.point, next_p, conf):
+                if next_p in best_cost:
+                    del best_cost[next_p]
+                continue
+            visited.add(next_p)
+
+            if np.linalg.norm(np.array(self.goal) - np.array(next_p)) <= 5.4 / 100.0:
+                # All we care about is the next point
+                # TODO: We need to check if the path length is <= 10, because if it isn't we probably need to
+                #  reduce the conf and try again for a shorter path.
+                while next_sp.previous.point != start_point:
+                    next_sp = next_sp.previous
+                return next_sp.point
+
+            # Add adjacent points to heap
+            reachable_points, goal_dists = self.numpy_adjacent_and_dist(next_p, conf)
+            for i in range(len(reachable_points)):
+                candidate_point = tuple(reachable_points[i])
+                goal_dist = goal_dists[i]
+                new_point = ScoredPoint(candidate_point, point_goal, next_sp.actual_cost + 1, next_sp,
+                                        goal_dist=goal_dist, skill=self.skill)
+                if candidate_point not in best_cost or best_cost[candidate_point] > new_point.actual_cost:
+                    points_checked += 1
+                    # if not self.splash_zone_within_polygon(new_point.previous.point, new_point.point, conf):
+                    #     continue
+                    best_cost[new_point.point] = new_point.actual_cost
+                    heapq.heappush(heap, new_point)
+
+        # No path available
+        return None
+
+    def _initialize_map_points(self, goal: Tuple[float, float], golf_map: Polygon):
+        # Storing the points as numpy array
+        np_map_points = [goal]
+        map_points = [goal]
+        self.mpl_poly = sympy_poly_to_mpl(golf_map)
+        self.shapely_poly = sympy_poly_to_shapely(golf_map)
+        pp = list(poly_to_points(golf_map))
+        for point in pp:
+            # Use matplotlib here because it's faster than shapely for this calculation...
+            if self.mpl_poly.contains_point(point):
+                # map_points.append(point)
+                x, y = point
+                np_map_points.append(np.array([x, y]))
+        # self.map_points = np.array(map_points)
+        self.np_map_points = np.array(np_map_points)
+        self.np_goal_dist = cdist(self.np_map_points, np.array([np.array(self.goal)]), 'euclidean')
+        self.np_goal_dist = self.np_goal_dist.flatten()
+
+    def play(self, score: int, golf_map: sympy.Polygon, target: sympy.geometry.Point2D,
+             sand_traps: List[sympy.geometry.Point2D], curr_loc: sympy.geometry.Point2D,
+             prev_loc: sympy.geometry.Point2D, prev_landing_point: sympy.geometry.Point2D, prev_admissible: bool) -> \
+    Tuple[float, float]:
         """Function which based n current game state returns the distance and angle, the shot must be played
 
         Args:
@@ -489,58 +321,83 @@ class Player:
         Returns:
             Tuple[float, float]: Return a tuple of distance and angle in radians to play the shot
         """
+        if self.np_map_points is None:
+            gx, gy = float(target.x), float(target.y)
+            self.goal = float(target.x), float(target.y)
+            self._initialize_map_points((gx, gy), golf_map)
+
+        # Optimization to retry missed shots
+        if self.prev_rv is not None and curr_loc == prev_loc:
+            return self.prev_rv
+
+        target_point = None
+        confidence = self.conf
+        cl = float(curr_loc.x), float(curr_loc.y)
+        while target_point is None:
+            if confidence <= 0.5:
+                return None
+
+            # print(f"searching with {confidence} confidence")
+            target_point = self.next_target(cl, target, confidence)
+            confidence -= 0.05
+
+        # fixup target
+        current_point = np.array(tuple(curr_loc)).astype(float)
+        if tuple(target_point) == self.goal:
+            original_dist = np.linalg.norm(np.array(target_point) - current_point)
+            v = np.array(target_point) - current_point
+            # Unit vector pointing from current to target
+            u = v / original_dist
+            if original_dist >= 20.0:
+                roll_distance = original_dist / 20
+                max_offset = roll_distance
+                offset = 0
+                prev_target = target_point
+                while offset < max_offset and self.splash_zone_within_polygon(tuple(current_point), target_point,
+                                                                              confidence):
+                    offset += 1
+                    dist = original_dist - offset
+                    prev_target = target_point
+                    target_point = current_point + u * dist
+                target_point = prev_target
+
+        cx, cy = current_point
+        tx, ty = target_point
+        angle = np.arctan2(ty - cy, tx - cx)
+
+        rv = curr_loc.distance(Point2D(target_point, evaluate=False)), angle
+        self.prev_rv = rv
+        return rv
 
 
-        print("Testing")
-        print(self.start_pt)
+# === Unit Tests ===
 
-    
-        self.get_heuristic(curr_loc[0], curr_loc[1])
-        self.get_heuristic(400, 400)
+def test_reachable():
+    current_point = Point2D(0, 0, evaluate=False)
+    target_point = Point2D(0, 250, evaluate=False)
+    player = Player(50, 0xdeadbeef, None)
 
-
-        for trap in self.sand_traps:
-            print("Trap : ")
-            print(trap)
+    assert not player.reachable_point(current_point, target_point, 0.80)
 
 
-    def A_star_search(graph, start, target) -> List[int]:
-        frontier = Frontier(start)
-        explored = set()
-        gamePathXY = []
-        while frontier:
-            state = frontier.pop()
-            explored.add(state)
-            if start == target:
-                gamePathXY.add(target)
-                break
-            for neighbor in graph[state]:
-                if neighbor not in explored.union(frontier.setPQ):
-                    cost = costParent(state) + get_heuristic(neighbor)
-                    frontier.setPQ.add(PrioritizedItem(cost, neighbor))
-                
+def test_splash_zone_within_polygon():
+    poly = Polygon((0, 0), (0, 300), (300, 300), (300, 0), evaluate=False)
+
+    current_point = Point2D(0, 0, evaluate=False)
+
+    # Just checking polygons inside and outside
+    inside_target_point = Point2D(150, 150, evaluate=False)
+    outside_target_point = Point2D(299, 100, evaluate=False)
+
+    player = Player(50, 0xdeadbeef, None)
+    assert player.splash_zone_within_polygon(current_point, inside_target_point, poly, 0.8)
+    assert not player.splash_zone_within_polygon(current_point, outside_target_point, poly, 0.8)
 
 
-
-
-
-    def in_sand_trap(self, x, y):
-        point = Point(x, y)
-        for trap in self.sand_traps:
-            if trap.contains(point):
-                return True
-        return False
-
-    def get_heuristic(self, x, y):
-        point = Point(x, y)
-        dist = distance.euclidean(point, self.end_pt)
-
-        max_dist = 200 + self.skill
-        heuristic = 0
-        if self.in_sand_trap(point):
-            heuristic = ( (dist - max_dist/2) / max_dist) + 1
-        else:
-            heuristic = dist / max_dist
-        
-        print("Euc Dist: {}, Heuristic: {}".format(dist, heuristic))
-        return heuristic
+def test_poly_to_points():
+    poly = Polygon((0, 0), (0, 10), (10, 10), (10, 0))
+    points = set(poly_to_points(poly))
+    for x in range(1, 10):
+        for y in range(1, 10):
+            assert (x, y) in points
+    assert len(points) == 81
