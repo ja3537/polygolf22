@@ -36,7 +36,6 @@ class Player:
         """
 
 '''
-
 import os
 import pickle
 import numpy as np
@@ -261,19 +260,25 @@ class Player:
 
         return np.linalg.norm(current_point - target_point) <= self._max_ddist_ppf(conf)
     
-    def splash_zone_within_polygon(self, current_point: Tuple[float, float], target_point: Tuple[float, float], conf: float, in_sandtrap: bool = False) -> bool:
+    def splash_zone_within_polygon(self, current_point: Tuple[float, float], target_point: Tuple[float, float], conf: float) -> bool:
         if type(current_point) == Point2D:
             current_point = tuple(Point2D)
 
         if type(target_point) == Point2D:
             target_point = tuple(Point2D)
 
+        #CHANGES: checks if point shot from is in sandtrap
+        in_sandtrap = False
+        if np.any(self.np_sand_trap_points == current_point):
+            in_sandtrap = True
+
+
         distance = np.linalg.norm(np.array(current_point).astype(float) - np.array(target_point).astype(float))
         cx, cy = current_point
         tx, ty = target_point
         angle = np.arctan2(float(ty) - float(cy), float(tx) - float(cx))
 
-        #TODO: add in_sandtrap
+        #CHANGES: add in_sandtrap
         splash_zone_poly_points = splash_zone(float(distance), float(angle), float(conf), self.skill, current_point, in_sandtrap)
         return self.shapely_poly.contains(ShapelyPolygon(splash_zone_poly_points))
 
@@ -305,6 +310,7 @@ class Player:
         while len(heap) > 0:
             next_sp = heapq.heappop(heap)
             next_p = next_sp.point
+
 
             if next_p in visited:
                 continue
