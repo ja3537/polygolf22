@@ -44,7 +44,7 @@ def spread_points(current_point, angles: np.array, distance, reverse) -> np.arra
 def splash_zone(distance: float, angle: float, conf: float, skill: int, current_point: Tuple[float, float], in_sandtrap: bool) -> np.array:
     conf_points = np.linspace(1 - conf, conf, 5)
     scale = 1.1
-    if in_sandtrap: 
+    if in_sandtrap:
         # the distance rating is halved, and the standard deviations for the angle and distance distributions are doubled
         distances = np.vectorize(standard_ppf)(
             conf_points) * (distance / skill) * 2
@@ -273,7 +273,7 @@ class Player:
         tx, ty = target_point
         angle = np.arctan2(float(ty) - float(cy), float(tx) - float(cx))
         splash_zone_poly_points = splash_zone(float(distance), float(
-            angle), float(conf), self.skill, current_point)
+            angle), float(conf), self.skill, current_point, current_point in self.map_points_in_sand_trap)
         return self.shapely_poly.contains(ShapelyPolygon(splash_zone_poly_points))
 
     def numpy_adjacent_and_dist(self, point: Tuple[float, float], conf: float):
