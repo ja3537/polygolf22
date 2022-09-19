@@ -371,6 +371,7 @@ class Player:
         Returns:
             Tuple[float, float]: Return a tuple of distance and angle in radians to play the shot
         """
+
         if self.np_map_points is None:
             gx, gy = float(target.x), float(target.y)
             self.goal = float(target.x), float(target.y)
