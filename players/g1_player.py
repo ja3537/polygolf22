@@ -191,7 +191,6 @@ class ScoredPoint:
 
 class Player:
     AVOID_SAND_PENALTY = 2
-    FULL_CONF = 0.9999
 
     def __init__(self, skill: int, rng: np.random.Generator, logger: logging.Logger, golf_map: sympy.Polygon, start: sympy.geometry.Point2D, target: sympy.geometry.Point2D, sand_traps: List[sympy.Polygon], map_path: str, precomp_dir: str) -> None:
         """Initialise the player with given skill.
@@ -258,7 +257,7 @@ class Player:
     def _max_sandtrap_ddist_ppf(self, conf:float):
         return self.max_sandtrap_ddist.ppf(1.0-conf)
 
-    def splash_zone_within_polygon(self, current_point: Tuple[float, float], target_point: Tuple[float, float], conf: float) -> bool:
+    def splash_zone(self, current_point: Tuple[float, float], target_point: Tuple[float, float], conf: float) -> np.array:
         if type(current_point) == Point2D:
             current_point = tuple(Point2D)
 
@@ -272,25 +271,13 @@ class Player:
         angle = np.arctan2(float(ty) - float(cy), float(tx) - float(cx))
         in_sandtrap = is_in_sand_trap(
             current_point, self.sand_trap_matlab_polys, cache=self.map_points_in_sand_trap)
-        splash_zone_poly_points = splash_zone(float(distance), float(
+        return splash_zone(float(distance), float(
             angle), float(conf), self.skill, current_point, in_sandtrap)
+    
+    def splash_zone_within_polygon(self, splash_zone_poly_points: np.array) -> bool:
         return self.shapely_poly.contains(ShapelyPolygon(splash_zone_poly_points))
 
-    def splash_zone_within_sand(self, current_point: Tuple[float, float], target_point: Tuple[float, float], conf: float) -> bool:
-        if type(current_point) == Point2D:
-            current_point = tuple(Point2D)
-
-        if type(target_point) == Point2D:
-            target_point = tuple(Point2D)
-
-        distance = np.linalg.norm(np.array(current_point).astype(
-            float) - np.array(target_point).astype(float))
-        cx, cy = current_point
-        tx, ty = target_point
-        angle = np.arctan2(float(ty) - float(cy), float(tx) - float(cx))
-        splash_zone_poly_points = splash_zone(float(distance), float(
-            angle), float(conf), self.skill, current_point, current_point in self.map_points_in_sand_trap)
-
+    def splash_zone_within_sand(self, splash_zone_poly_points: np.array) -> bool:
         for sand_trap in self.sand_trap_shapely_polys:
             if sand_trap.intersects(ShapelyPolygon(splash_zone_poly_points)):
                 return True
@@ -330,12 +317,16 @@ class Player:
                 continue
             if next_sp.actual_cost > 10:
                 continue
-            if next_sp.actual_cost > 0 and self.splash_zone_within_sand(next_sp.previous.point, next_p, self.FULL_CONF):
-                actual_cost += self.AVOID_SAND_PENALTY
-            if next_sp.actual_cost > 0 and not self.splash_zone_within_polygon(next_sp.previous.point, next_p, conf):
-                if next_p in best_cost:
-                    del best_cost[next_p]
-                continue
+
+            if next_sp.actual_cost > 0:
+                splash_zone = self.splash_zone(next_sp.previous.point, next_p, conf)
+                if not self.splash_zone_within_polygon(splash_zone):
+                    if next_p in best_cost:
+                        del best_cost[next_p]
+                    continue
+                if self.splash_zone_within_sand(splash_zone):
+                    actual_cost += self.AVOID_SAND_PENALTY
+
             visited.add(next_p)
 
             if np.linalg.norm(np.array(self.goal) - np.array(next_p)) <= 5.4 / 100.0:
@@ -437,7 +428,8 @@ class Player:
                 max_offset = roll_distance
                 offset = 0
                 prev_target = target_point
-                while offset < max_offset and self.splash_zone_within_polygon(tuple(current_point), target_point, confidence):
+                splash_zone = self.splash_zone(tuple(current_point), target_point, confidence)
+                while offset < max_offset and self.splash_zone_within_polygon(splash_zone):
                     offset += 1
                     dist = original_dist - offset
                     prev_target = target_point
@@ -474,9 +466,9 @@ def test_splash_zone_within_polygon():
 
     player = Player(50, 0xdeadbeef, None)
     assert player.splash_zone_within_polygon(
-        current_point, inside_target_point, poly, 0.8)
+        player.splash_zone(current_point, inside_target_point, poly, 0.8))
     assert not player.splash_zone_within_polygon(
-        current_point, outside_target_point, poly, 0.8)
+        player.splash_zone(current_point, outside_target_point, poly, 0.8))
 
 
 def test_poly_to_points():
