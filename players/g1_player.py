@@ -41,17 +41,33 @@ def spread_points(current_point, angles: np.array, distance, reverse) -> np.arra
     return np.column_stack((xs, ys))
 
 
-def splash_zone(distance: float, angle: float, conf: float, skill: int, current_point: Tuple[float, float]) -> np.array:
+def splash_zone(distance: float, angle: float, conf: float, skill: int, current_point: Tuple[float, float], in_sandtrap: bool) -> np.array:
     conf_points = np.linspace(1 - conf, conf, 5)
-    distances = np.vectorize(standard_ppf)(conf_points) * (distance / skill) + distance
-    angles = np.vectorize(standard_ppf)(conf_points) * (1/(2*skill)) + angle
     scale = 1.1
-    if distance <= 20:
+    if in_sandtrap: 
+        # the distance rating is halved, and the standard deviations for the angle and distance distributions are doubled
+        distances = np.vectorize(standard_ppf)(
+            conf_points) * (distance / skill) * 2
+        angles = np.vectorize(standard_ppf)(
+            conf_points) * (1/(2*skill)) * 2 + angle
+    else:
+        distances = np.vectorize(standard_ppf)(
+            conf_points) * (distance / skill) + distance
+        angles = np.vectorize(standard_ppf)(
+            conf_points) * (1/(2*skill)) + angle
+
+    if distance <= 20 or in_sandtrap:
+        # If a ball lands in a sand trap, it does not roll
         scale = 1.0
+    if distance <= 20 and in_sandtrap:
+        # If you're in a sand trap and happen to be closer than 20m to the hole
+        # the simulator does not make you use a putter
+        scale = 1.1
+
     max_distance = distances[-1]*scale
     top_arc = spread_points(current_point, angles, max_distance, False)
 
-    if distance > 20:
+    if distance > 20 or (distance <= 20 and in_sandtrap):
         min_distance = distances[0]
         bottom_arc = spread_points(current_point, angles, min_distance, True)
         return np.concatenate((top_arc, bottom_arc, np.array([top_arc[0]])))
@@ -127,6 +143,7 @@ def find_map_points_in_sand_trap(map_points: List[Tuple[float, float]], sand_tra
 
 class ScoredPoint:
     """Scored point class for use in A* search algorithm"""
+
     def __init__(self, point: Tuple[float, float], goal: Tuple[float, float], actual_cost=float('inf'), previous=None, goal_dist=None, skill=50):
         self.point = point
         self.goal = goal
@@ -140,7 +157,8 @@ class ScoredPoint:
             goal_dist = np.linalg.norm(a - b)
 
         max_target_dist = 200 + skill
-        max_dist = standard_ppf(0.99) * (max_target_dist / skill) + max_target_dist
+        max_dist = standard_ppf(
+            0.99) * (max_target_dist / skill) + max_target_dist
         max_dist *= 1.10
         self._h_cost = goal_dist / max_dist
 
@@ -163,10 +181,10 @@ class ScoredPoint:
 
     def __eq__(self, other):
         return self.point == other.point
-    
+
     def __hash__(self):
         return hash(self.point)
-    
+
     def __repr__(self):
         return f"ScoredPoint(point = {self.point}, h_cost = {self.h_cost})"
 
@@ -189,7 +207,7 @@ class Player:
         # precomp_path = os.path.join(precomp_dir, "{}_skill-{}.pkl".format(map_path, skill))
         # # if doesn't depend on skill
         # precomp_path = os.path.join(precomp_dir, "{}.pkl".format(map_path))
-        
+
         # # precompute check
         # if os.path.isfile(precomp_path):
         #     # Getting back the objects:
@@ -221,7 +239,7 @@ class Player:
         self.conf = 0.95
         if self.skill < 40:
             self.conf = 0.75
-        
+
         # initialize logger
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(logging.DEBUG)
@@ -241,7 +259,7 @@ class Player:
         target_point = np.array(target_point).astype(float)
 
         return np.linalg.norm(current_point - target_point) <= self._max_ddist_ppf(conf)
-    
+
     def splash_zone_within_polygon(self, current_point: Tuple[float, float], target_point: Tuple[float, float], conf: float) -> bool:
         if type(current_point) == Point2D:
             current_point = tuple(Point2D)
@@ -249,15 +267,18 @@ class Player:
         if type(target_point) == Point2D:
             target_point = tuple(Point2D)
 
-        distance = np.linalg.norm(np.array(current_point).astype(float) - np.array(target_point).astype(float))
+        distance = np.linalg.norm(np.array(current_point).astype(
+            float) - np.array(target_point).astype(float))
         cx, cy = current_point
         tx, ty = target_point
         angle = np.arctan2(float(ty) - float(cy), float(tx) - float(cx))
-        splash_zone_poly_points = splash_zone(float(distance), float(angle), float(conf), self.skill, current_point)
+        splash_zone_poly_points = splash_zone(float(distance), float(
+            angle), float(conf), self.skill, current_point)
         return self.shapely_poly.contains(ShapelyPolygon(splash_zone_poly_points))
 
     def numpy_adjacent_and_dist(self, point: Tuple[float, float], conf: float):
-        cloc_distances = cdist(self.np_map_points, np.array([np.array(point)]), 'euclidean')
+        cloc_distances = cdist(self.np_map_points, np.array(
+            [np.array(point)]), 'euclidean')
         cloc_distances = cloc_distances.flatten()
         distance_mask = cloc_distances <= self._max_ddist_ppf(conf)
 
@@ -295,9 +316,10 @@ class Player:
                 while next_sp.previous.point != start_point:
                     next_sp = next_sp.previous
                 return next_sp.point
-            
+
             # Add adjacent points to heap
-            reachable_points, goal_dists = self.numpy_adjacent_and_dist(next_p, conf)
+            reachable_points, goal_dists = self.numpy_adjacent_and_dist(
+                next_p, conf)
             for i in range(len(reachable_points)):
                 candidate_point = tuple(reachable_points[i])
                 goal_dist = goal_dists[i]
@@ -314,10 +336,11 @@ class Player:
         return None
 
     def _initialize_map_points(self, goal: Tuple[float, float], golf_map: Polygon, sand_traps: List[sympy.Polygon]):
-        np_map_points = [goal] # storing the points as numpy array
+        np_map_points = [goal]  # storing the points as numpy array
         self.mpl_poly = sympy_poly_to_mpl(golf_map)
         self.shapely_poly = sympy_poly_to_shapely(golf_map)
-        self.sand_trap_matlab_polys = [sympy_poly_to_mpl(sand_trap) for sand_trap in sand_traps]
+        self.sand_trap_matlab_polys = [sympy_poly_to_mpl(
+            sand_trap) for sand_trap in sand_traps]
 
         pp = list(poly_to_points(golf_map))
         for point in pp:
@@ -326,9 +349,11 @@ class Player:
                 x, y = point
                 np_map_points.append(np.array([x, y]))
 
-        self.map_points_in_sand_trap = find_map_points_in_sand_trap(pp, self.sand_trap_matlab_polys)
+        self.map_points_in_sand_trap = find_map_points_in_sand_trap(
+            pp, self.sand_trap_matlab_polys)
         self.np_map_points = np.array(np_map_points)
-        self.np_goal_dist = cdist(self.np_map_points, np.array([np.array(self.goal)]), 'euclidean')
+        self.np_goal_dist = cdist(self.np_map_points, np.array(
+            [np.array(self.goal)]), 'euclidean')
         self.np_goal_dist = self.np_goal_dist.flatten()
 
     def play(self, score: int, golf_map: sympy.Polygon, target: sympy.geometry.Point2D, sand_traps: List[sympy.Polygon], curr_loc: sympy.geometry.Point2D, prev_loc: sympy.geometry.Point2D, prev_landing_point: sympy.geometry.Point2D, prev_admissible: bool) -> Tuple[float, float]:
@@ -369,7 +394,8 @@ class Player:
         # fixup target
         current_point = np.array(tuple(curr_loc)).astype(float)
         if tuple(target_point) == self.goal:
-            original_dist = np.linalg.norm(np.array(target_point) - current_point)
+            original_dist = np.linalg.norm(
+                np.array(target_point) - current_point)
             v = np.array(target_point) - current_point
             # Unit vector pointing from current to target
             u = v / original_dist
@@ -400,12 +426,12 @@ def test_reachable():
     current_point = Point2D(0, 0, evaluate=False)
     target_point = Point2D(0, 250, evaluate=False)
     player = Player(50, 0xdeadbeef, None)
-    
+
     assert not player.reachable_point(current_point, target_point, 0.80)
 
 
 def test_splash_zone_within_polygon():
-    poly = Polygon((0,0), (0, 300), (300, 300), (300, 0), evaluate=False)
+    poly = Polygon((0, 0), (0, 300), (300, 300), (300, 0), evaluate=False)
 
     current_point = Point2D(0, 0, evaluate=False)
 
@@ -414,16 +440,18 @@ def test_splash_zone_within_polygon():
     outside_target_point = Point2D(299, 100, evaluate=False)
 
     player = Player(50, 0xdeadbeef, None)
-    assert player.splash_zone_within_polygon(current_point, inside_target_point, poly, 0.8)
-    assert not player.splash_zone_within_polygon(current_point, outside_target_point, poly, 0.8)
+    assert player.splash_zone_within_polygon(
+        current_point, inside_target_point, poly, 0.8)
+    assert not player.splash_zone_within_polygon(
+        current_point, outside_target_point, poly, 0.8)
 
 
 def test_poly_to_points():
-    poly = Polygon((0,0), (0, 10), (10, 10), (10, 0))
+    poly = Polygon((0, 0), (0, 10), (10, 10), (10, 0))
     points = set(poly_to_points(poly))
     for x in range(1, 10):
         for y in range(1, 10):
-            assert (x,y) in points
+            assert (x, y) in points
     assert len(points) == 81
 
 
@@ -431,33 +459,34 @@ def test_is_in_sand_trap():
     cases = [
         {
             "name": "point in one of the sand traps",
-            "point": (5,5),
+            "point": (5, 5),
             "sand_traps": [
-                Polygon((4,4), (4,9), (9,9), (9,4)),
-                Polygon((0,0), (0,4), (3,0))
+                Polygon((4, 4), (4, 9), (9, 9), (9, 4)),
+                Polygon((0, 0), (0, 4), (3, 0))
             ],
             "expect": True
         },
         {
             "name": "point not in any sand trap",
-            "point": (10,10),
+            "point": (10, 10),
             "sand_traps": [
-                Polygon((4,4), (4,9), (9,9), (9,4)),
-                Polygon((0,0), (0,4), (3,0))
+                Polygon((4, 4), (4, 9), (9, 9), (9, 4)),
+                Polygon((0, 0), (0, 4), (3, 0))
             ],
             "expect": False
         },
         {
             "name": "point in cache",
-            "point": (5,5),
+            "point": (5, 5),
             "sand_traps": [],  # empty to test if cache is checked
-            "cache": {(5,5)},
+            "cache": {(5, 5)},
             "expect": True
         }
     ]
 
     for tc in cases:
-        sand_trap_matplot_polys = [sympy_poly_to_mpl(poly) for poly in tc["sand_traps"]]
+        sand_trap_matplot_polys = [sympy_poly_to_mpl(
+            poly) for poly in tc["sand_traps"]]
         cache = set() if "cache" not in tc else tc["cache"]
         ans = is_in_sand_trap(tc["point"], sand_trap_matplot_polys, cache)
 
@@ -470,7 +499,7 @@ def test_find_map_points_in_sand_trap():
             "name": "no point in sand trap",
             "map_points": [(9.5, 9.5), (5., 5.), (5., 10.), (10., 5.), (10., 10.)],
             "sand_traps": [
-                Polygon((0,0), (0,2), (2,2), (2,0))
+                Polygon((0, 0), (0, 2), (2, 2), (2, 0))
             ],
             "expect": set()
         },
@@ -478,7 +507,7 @@ def test_find_map_points_in_sand_trap():
             "name": "one point in sand trap",
             "map_points": [(9.5, 9.5), (5., 5.), (5., 10.), (10., 5.), (10., 10.)],
             "sand_traps": [
-                Polygon((4,4), (4,9), (9,9), (9,4))
+                Polygon((4, 4), (4, 9), (9, 9), (9, 4))
             ],
             "expect": {(5., 5.)}
         },
@@ -486,14 +515,16 @@ def test_find_map_points_in_sand_trap():
             "name": "multiple points in sand trap",
             "map_points": [(9.5, 9.5), (5., 5.), (5., 10.), (10., 5.), (10., 10.)],
             "sand_traps": [
-                Polygon((4,4), (4,9), (9,9), (9,4)),
-                Polygon((9,9), (9,10), (10,10), (10,9))
+                Polygon((4, 4), (4, 9), (9, 9), (9, 4)),
+                Polygon((9, 9), (9, 10), (10, 10), (10, 9))
             ],
             "expect": {(9.5, 9.5), (5., 5.)}
         }
     ]
 
     for tc in cases:
-        sand_trap_paths = [sympy_poly_to_mpl(poly) for poly in tc["sand_traps"]]
-        points_in_sand_trap = find_map_points_in_sand_trap(tc["map_points"], sand_trap_paths)
+        sand_trap_paths = [sympy_poly_to_mpl(
+            poly) for poly in tc["sand_traps"]]
+        points_in_sand_trap = find_map_points_in_sand_trap(
+            tc["map_points"], sand_trap_paths)
         assert points_in_sand_trap == tc["expect"]
