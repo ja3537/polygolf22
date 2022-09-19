@@ -495,10 +495,17 @@ class GolfGame:
             landing_point = sympy.Point2D(curr_loc.x+actual_distance*sympy.cos(actual_angle), curr_loc.y+actual_distance*sympy.sin(actual_angle))
             final_point = sympy.Point2D(curr_loc.x+(1.+constants.extra_roll)*actual_distance*sympy.cos(actual_angle), curr_loc.y+(1.+constants.extra_roll)*actual_distance*sympy.sin(actual_angle))
 
-        elif distance < constants.min_putter_dist and not in_sand:
-            self.logger.debug("Using Putter as provided distance {:.3f} less than {}".format(float(distance), constants.min_putter_dist))
-            landing_point = curr_loc
-            final_point = sympy.Point2D(curr_loc.x+actual_distance*sympy.cos(actual_angle), curr_loc.y+actual_distance*sympy.sin(actual_angle))
+        elif distance < constants.min_putter_dist:
+            if not in_sand:
+                self.logger.debug("Using Putter as provided distance {:.3f} less than {}".format(float(distance), constants.min_putter_dist))
+                landing_point = curr_loc
+                final_point = sympy.Point2D(curr_loc.x+actual_distance*sympy.cos(actual_angle), curr_loc.y+actual_distance*sympy.sin(actual_angle))
+            else:
+                landing_point = sympy.Point2D(curr_loc.x + actual_distance * sympy.cos(actual_angle),
+                                              curr_loc.y + actual_distance * sympy.sin(actual_angle))
+                final_point = sympy.Point2D(
+                    curr_loc.x + (1. + constants.extra_roll) * actual_distance * sympy.cos(actual_angle),
+                    curr_loc.y + (1. + constants.extra_roll) * actual_distance * sympy.sin(actual_angle))
 
         else:
             self.logger.debug("Provide invalid distance {:.3f}, distance should be < {}".format(float(distance), constants.max_dist+self.skills[player_idx]))
@@ -507,13 +514,16 @@ class GolfGame:
         
         self.logger.debug("Observed Distance: {:.3f}, Angle: {:.3f}".format(actual_distance, actual_angle))
 
+        land_in_sand = False
         for s in self.golf.sand_traps: #checks for landing in sand
             if s.encloses(landing_point):
+                land_in_sand = True
                 final_point = landing_point
                 break
 
         segment_land = sympy.geometry.Segment2D(landing_point, final_point)
         intersections = []
+        roll_in_sand = False
         for s in self.golf.sand_traps: #check for rolling into sand traps
             intersections.extend(s.intersection(segment_land))
         minp = None
@@ -525,6 +535,7 @@ class GolfGame:
                     mind = p.distance(landing_point)
 
         if minp is not None: #rolled into sand trap
+            roll_in_sand = True
             if minp.distance(final_point) > 0.01:
                 sand_roll = sympy.Segment2D(minp, final_point)
                 final_point = final_point = sympy.Point2D(minp.x+0.01*sympy.cos(actual_angle), minp.y+0.01*sympy.sin(actual_angle)) #roll 1cm
@@ -561,6 +572,7 @@ class GolfGame:
         step_play_dict["observed_landing_point"]= observed_landing_point
         step_play_dict["admissible"]= admissible
         step_play_dict["reached_target"]= reached_target
+        step_play_dict["land_in_sand"] = land_in_sand
+        step_play_dict["roll_in_sand"] = roll_in_sand
         return step_play_dict
-
 

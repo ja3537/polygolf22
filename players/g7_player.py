@@ -182,6 +182,7 @@ class Player:
                  sand_traps: list[sympy.Polygon],
                  map_path: str,
                  precomp_dir: str) -> None:
+
         """Initialise the player with given skill.
 
         Args:
@@ -341,6 +342,7 @@ class Player:
 
         return np.linalg.norm(distance) <= self._max_ddist_ppf(conf)
 
+
     def is_splash_zone_within_polygon(self, current_point: Tuple[float, float], target_point: Tuple[float, float], conf: float) -> bool:
         if type(current_point) == Point2D: current_point = tuple(Point2D)
         if type(target_point) == Point2D: target_point = tuple(Point2D)
@@ -357,6 +359,7 @@ class Player:
 
     def play(self, score: int, golf_map: sympy.Polygon, target: sympy.geometry.Point2D, sand_traps: list[sympy.Polygon], curr_loc: sympy.geometry.Point2D, prev_loc: sympy.geometry.Point2D, prev_landing_point: sympy.geometry.Point2D, prev_admissible: bool) -> Tuple[float, float]:
         """Function which based on current game state returns the distance and angle, the shot must be played
+
 
         Args:
         score (int): Your total score including current turn

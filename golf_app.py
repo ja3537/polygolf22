@@ -207,6 +207,8 @@ class GolfApp(App):
         base_stroke_color = "0,0,0"
         if not step_play_dict["admissible"]:
             base_stroke_color = "255,0,0"
+        elif step_play_dict["land_in_sand"] or step_play_dict["roll_in_sand"]:
+            base_stroke_color = "255,160,50"
         stroke_color_air = "rgba({}, 0.2)".format(base_stroke_color)
         stroke_color_land = "rgba({}, 1)".format(base_stroke_color)
 
