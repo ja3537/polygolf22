@@ -2,19 +2,24 @@ import functools
 import logging
 import os
 import pickle
+import heapq
 from typing import Iterator, Tuple
 
+from sympy import Triangle
 import numpy as np
 import scipy
 from scipy import stats as scipy_stats
 from shapely.geometry import Point, Polygon as ShapelyPolygon
 import sympy
 from sympy.geometry import Point2D, Polygon  # Polygon is unused
+from matplotlib.path import Path
+from shapely.geometry import Polygon as ShapelyPolygon, Point
+from scipy.spatial.distance import cdist
 
-STEP = 1.0  # chunk size == 1m
+STEP = 5.0  # chunk size == 1m
 DIST = scipy_stats.norm(0, 1)
-X_STEP = 1.0
-Y_STEP = 1.0
+X_STEP = 5.0
+Y_STEP = 5.0
 
 
 @functools.lru_cache()
@@ -174,7 +179,7 @@ class Player:
                  golf_map: sympy.Polygon,
                  start: sympy.geometry.Point2D,
                  target: sympy.geometry.Point2D,
-                 sand_traps: list[sympy.geometry.Point2D],
+                 sand_traps: list[sympy.Polygon],
                  map_path: str,
                  precomp_dir: str) -> None:
         """Initialise the player with given skill.
@@ -194,10 +199,14 @@ class Player:
         self.skill = skill
         self.rng = rng
         self.logger = logger
-        self.target = None
-        self.np_points = None
-        self.shapely_polygon = None
-        self.shapely_polygon_trap = None
+        self.np_map_points = None
+        self.mpl_poly = None
+        self.shapely_poly = None
+        self.goal = None
+        self.poly_list = []
+        self.poly_shapely = []
+        self.prev_rv = None
+        
 
         # Group 9 code needed for precompute() ################################
         self.rows, self.columns = None, None
@@ -213,50 +222,108 @@ class Player:
         self.columns = int(np.ceil(width / STEP )) # STEP == self.cell_width??
         self.zero_center = Point(x_min + STEP / 2, max_y - STEP / 2)
 
-        precomp_path = os.path.join(precomp_dir, "{}.pkl".format(map_path))
-        # precompute check
-        if os.path.isfile(precomp_path):
-            self.dmap = pickle.load(open(precomp_path, "rb"))
-        else:
-            self.precompute()
-            pickle.dump(self.dmap, open(precomp_path, "wb"))
-        # End #################################################################
+#        precomp_path = os.path.join(precomp_dir, "{}.pkl".format(map_path))
+#         # precompute check
+#         if os.path.isfile(precomp_path):
+#             self.dmap = pickle.load(open(precomp_path, "rb"))
+#         else:
+#             self.precompute()
+#             pickle.dump(self.dmap, open(precomp_path, "wb"))
+#         # End #################################################################
 
 
         max_distance = 200 + self.skill # -0.001 is what Group 9 did at the end
         self.max_ddist = scipy_stats.norm(max_distance, max_distance / self.skill)
 
-    def polygon_to_np_points(self, target: Tuple[float, float], golf_map: sympy.Polygon, sand_traps: list[sympy.geometry.Point2D]):
-        """
-        Gets the points within the polygon and stores them in a numpy array
-        along with their distances to the target.
+    def numpy_adjacent_and_dist(self, point: Tuple[float, float], conf: float):
+        cloc_distances = cdist(self.np_map_points, np.array([np.array(point)]), 'euclidean')
+        cloc_distances = cloc_distances.flatten()
+        distance_mask = cloc_distances <= self._max_ddist_ppf(conf)
 
-        Added extra number at the end of tuple to denote wether the point is within a sandtrap
-        or just within the grass.
-        """
-        points = [target]
-        trap_points = []
-        self.shapely_polygon = sympy_polygon_to_shapely(golf_map)
-        for trap in sand_traps:
-            for trap in sand_traps:
-                self.shapely_polygon_trap = sympy_tri_to_shapely(trap)
-                self.mpl_polygon_trap = sympy_tri_to_mpl(trap)
-                polygon_points = list(polygon_to_points(trap))
-                for point in polygon_points:
-                    if self.mpl_polygon_trap.contains_point(point):
-                        x, y = point
-                        trap_points.append(np.array([x,y]))
-            # trap_points.append(polygon_to_points(trap))
+        reachable_points = self.np_map_points[distance_mask]
+        goal_distances = self.np_goal_dist[distance_mask]
+
+        return reachable_points, goal_distances
+
+    def next_target(self, curr_loc: Tuple[float, float], goal: Point2D, conf: float) -> Union[None, Tuple[float, float]]:
+        point_goal = float(goal.x), float(goal.y)
+        heap = [ScoredPoint(curr_loc, point_goal, 0.0)]
+        start_point = heap[0].point
+        # Used to cache the best cost and avoid adding useless points to the heap
+        best_cost = {tuple(curr_loc): 0.0}
+        visited = set()
+        points_checked = 0
+        while len(heap) > 0:
+            next_sp = heapq.heappop(heap)
+            next_p = next_sp.point
+
+            if next_p in visited:
+                continue
+            if next_sp.actual_cost > 10:
+                continue
+            if next_sp.actual_cost > 0 and not self.splash_zone_within_polygon(next_sp.previous.point, next_p, conf):
+                if next_p in best_cost:
+                    del best_cost[next_p]
+                continue
+            visited.add(next_p)
+
+            if np.linalg.norm(np.array(self.goal) - np.array(next_p)) <= 5.4 / 100.0:
+                # All we care about is the next point
+                # TODO: We need to check if the path length is <= 10, because if it isn't we probably need to
+                #  reduce the conf and try again for a shorter path.
+                while next_sp.previous.point != start_point:
+                    next_sp = next_sp.previous
+                return next_sp.point
             
-        polygon_points = polygon_to_points(golf_map)
-        for point in polygon_points:
-            if self.shapely_polygon.contains(point) not in trap_points:
-                x, y = point
-                points.append(np.array([x, y,0]))
+            # Add adjacent points to heap
+            reachable_points, goal_dists = self.numpy_adjacent_and_dist(next_p, conf)
+            for i in range(len(reachable_points)):
+                candidate_point = tuple(reachable_points[i])
+                goal_dist = goal_dists[i]
+                new_point = ScoredPoint(candidate_point, point_goal, next_sp.actual_cost + 1, next_sp,
+                                        goal_dist=goal_dist, skill=self.skill)
+                if candidate_point not in best_cost or best_cost[candidate_point] > new_point.actual_cost:
+                    points_checked += 1
+                    # if not self.splash_zone_within_polygon(new_point.previous.point, new_point.point, conf):
+                    #     continue
+                    best_cost[new_point.point] = new_point.actual_cost
+                    heapq.heappush(heap, new_point)
 
-        self.np_points = np.array(points)
-        self.np_dist_to_target = scipy.spatial.distance.cdist(self.np_points, np.array([np.array(self.target)]), 'euclidean')
-        self.np_dist_to_target = self.np_dist_to_target.flatten()
+        # No path available
+        return None
+
+    def polygon_to_np_points(self, goal: Tuple[float, float], golf_map: Polygon, sand_traps: list[Polygon]):
+        # Storing the points as numpy array
+        np_map_points = [goal]
+        map_points = [goal]
+        trap_points = []
+        yes = False
+        self.mpl_poly = sympy_poly_to_mpl(golf_map)
+        self.shapely_poly = sympy_poly_to_shapely(golf_map)
+        for trap in sand_traps:
+            self.shapely_polygon_trap = sympy_tri_to_shapely(trap)
+            self.mpl_polygon_trap = sympy_tri_to_mpl(trap)
+            self.poly_list.append(sympy_tri_to_mpl(trap))
+            self.poly_shapely.append(sympy_tri_to_shapely(trap))
+            pp = list(poly_to_points(trap))
+            for point in pp:
+                if self.mpl_polygon_trap.contains_point(point):
+                    x, y = point
+                    trap_points.append(np.array([x,y]))
+        pp = list(poly_to_points(golf_map))
+        for point in pp:
+            # Use matplotlib here because it's faster than shapely for this calculation...
+            for trap in sand_traps:
+                if self.mpl_polygon_trap.contains_point(point):
+                    yes = True
+            if self.mpl_poly.contains_point(point) and yes != True:
+                # map_points.append(point)
+                x, y = point
+                np_map_points.append(np.array([x, y]))
+        # self.map_points = np.array(map_points)
+        self.np_map_points = np.array(np_map_points)
+        self.np_goal_dist = cdist(self.np_map_points, np.array([np.array(self.goal)]), 'euclidean')
+        self.np_goal_dist = self.np_goal_dist.flatten()
 
     def reachable(self, current_point: Tuple[float, float], target_point: Tuple[float, float], conf: float) -> bool:
         if type(current_point) == Point2D:
@@ -282,11 +349,13 @@ class Player:
         cx, cy = float(current_point[0]), float(current_point[1])
         tx, ty = float(target_point[0]), float(target_point[1])
         angle = np.arctan2(ty - cy, tx - cx)
-
+        # for trap in self.poly_shapely:
+        #     if trap.contains(ShapelyPolygon(splash_zone_poly_points)):
+        #         return False
         splash_zone_polygon_points = splash_zone(float(distance), float(angle), float(conf), self.skill, current_point)
         return self.shapely_polygon.contains(ShapelyPolygon(splash_zone_polygon_points))
 
-    def play(self, score: int, golf_map: sympy.Polygon, target: sympy.geometry.Point2D, sand_traps: list[sympy.geometry.Point2D], curr_loc: sympy.geometry.Point2D, prev_loc: sympy.geometry.Point2D, prev_landing_point: sympy.geometry.Point2D, prev_admissible: bool) -> Tuple[float, float]:
+    def play(self, score: int, golf_map: sympy.Polygon, target: sympy.geometry.Point2D, sand_traps: list[sympy.Polygon], curr_loc: sympy.geometry.Point2D, prev_loc: sympy.geometry.Point2D, prev_landing_point: sympy.geometry.Point2D, prev_admissible: bool) -> Tuple[float, float]:
         """Function which based on current game state returns the distance and angle, the shot must be played
 
         Args:
@@ -301,11 +370,53 @@ class Player:
         Returns:
         Tuple[float, float]: Return a tuple of distance and angle in radians to play the shot
         """
-        # if self.np_points is None:
-        #         gx, gy = float(target.x), float(target.y)
-        #         self.goal = float(target.x), float(target.y)
-        #         self.polygon_to_np_points((gx, gy), golf_map, sand_traps)
+        if self.np_points is None:
+                gx, gy = float(target.x), float(target.y)
+                self.goal = float(target.x), float(target.y)
+                self.polygon_to_np_points((gx, gy), golf_map, sand_traps)
+                
+        # Optimization to retry missed shots
+        if self.prev_rv is not None and curr_loc == prev_loc:
+            return self.prev_rv
 
+        target_point = None
+        confidence = self.conf
+        cl = float(curr_loc.x), float(curr_loc.y)
+        while target_point is None:
+            if confidence <= 0.5:
+                return None
+
+            # print(f"searching with {confidence} confidence")
+            target_point = self.next_target(cl, target, confidence)
+            confidence -= 0.05
+
+        # fixup target
+        current_point = np.array(tuple(curr_loc)).astype(float)
+        if tuple(target_point) == self.goal:
+            original_dist = np.linalg.norm(np.array(target_point) - current_point)
+            v = np.array(target_point) - current_point
+            # Unit vector pointing from current to target
+            u = v / original_dist
+            if original_dist >= 20.0:
+                roll_distance = original_dist / 20
+                max_offset = roll_distance
+                offset = 0
+                prev_target = target_point
+                while offset < max_offset and self.splash_zone_within_polygon(tuple(current_point), target_point, confidence):
+                    offset += 1
+                    dist = original_dist - offset
+                    prev_target = target_point
+                    target_point = current_point + u * dist
+                target_point = prev_target
+
+        cx, cy = current_point
+        tx, ty = target_point
+        angle = np.arctan2(ty - cy, tx - cx)
+
+        rv = curr_loc.distance(Point2D(target_point, evaluate=False)), angle
+        self.prev_rv = rv
+        return rv
+    
     # Functions from group 9 that are needed for precompute ###################
     def get_center(self, row: int, column: int) -> Point:
         x = self.zero_center.x + column * STEP
