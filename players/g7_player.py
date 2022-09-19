@@ -3,7 +3,7 @@ import logging
 import os
 import pickle
 import heapq
-from typing import Iterator, Tuple
+from typing import Iterator, Tuple, List, Union
 
 from sympy import Triangle
 import numpy as np
