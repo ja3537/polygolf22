@@ -112,10 +112,15 @@ class ScoredPoint:
             b = np.array(self.goal)
             goal_dist = np.linalg.norm(a - b)
 
-        max_target_dist = 200 + skill
-        max_dist = standard_ppf(0.99) * (max_target_dist / skill) + max_target_dist
-        max_dist *= 1.10
-        
+        if in_sand_trap:
+            max_target_dist = (200 + skill) / 2
+            max_dist = standard_ppf(0.99) * (max_target_dist / skill) + max_target_dist
+            max_dist *= 1.10
+        else:
+            max_target_dist = 200 + skill
+            max_dist = standard_ppf(0.99) * (max_target_dist / skill) + max_target_dist
+            max_dist *= 1.10
+
         if in_sand_trap:
             self._h_cost = ((goal_dist - max_dist / 2) / max_dist) + 1
         else:
