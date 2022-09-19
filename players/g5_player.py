@@ -195,6 +195,7 @@ class Player:
         if self.skill < 40:
             self.conf = 0.75
 
+
     @functools.lru_cache()
     def _max_ddist_ppf(self, conf: float):
         return self.max_ddist.ppf(1.0 - conf)
