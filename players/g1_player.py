@@ -50,7 +50,6 @@ def splash_zone(distance: float, angle: float, conf: float, skill: int, current_
             conf_points) * (distance / skill) * 2 + distance / 2
         angles = np.vectorize(standard_ppf)(
             conf_points) * (1/(2*skill)) * 2 + angle
-        print("YES SAND")
     else:
         distances = np.vectorize(standard_ppf)(
             conf_points) * (distance / skill) + distance
@@ -299,13 +298,11 @@ class Player:
             distance_mask = cloc_distances <= self._max_sandtrap_ddist_ppf(conf)
             reachable_points = self.np_map_points[distance_mask]
             goal_distances = self.np_goal_dist[distance_mask]
-            print(in_sandtrap)
 
         else:
             distance_mask = cloc_distances <= self._max_ddist_ppf(conf)
             reachable_points = self.np_map_points[distance_mask]
             goal_distances = self.np_goal_dist[distance_mask]
-            print("NO SAND")
 
         return reachable_points, goal_distances
 
@@ -340,17 +337,9 @@ class Player:
                 return next_sp.point
 
             # Add adjacent points to heap
-            #print("next point", next_p)
-            #temp = (403.0, 537.0)
-
-           # print("method temp", is_in_sand_trap(temp, self.sand_trap_matlab_polys))
-
-            #print("temp manual", temp in self.map_points_in_sand_trap)
-            #print(self.map_points_in_sand_trap)
             reachable_points, goal_dists = self.numpy_adjacent_and_dist(
                 next_p, conf, is_in_sand_trap(next_p, self.sand_trap_matlab_polys))
-            #print(next_p)
-            #print(reachable_points)
+
             for i in range(len(reachable_points)):
                 candidate_point = tuple(reachable_points[i])
                 goal_dist = goal_dists[i]
@@ -361,8 +350,6 @@ class Player:
                     # if not self.splash_zone_within_polygon(new_point.previous.point, new_point.point, conf):
                     #     continue
                     best_cost[new_point.point] = new_point.actual_cost
-                    #print(next_p)
-                    #print(new_point)
                     heapq.heappush(heap, new_point)
 
         # No path available
