@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 import os
 import pickle
 import numpy as np
@@ -5,6 +6,7 @@ import functools
 import sympy
 import logging
 import heapq
+import time
 from scipy import stats as scipy_stats
 
 from typing import Tuple, Iterator, List, Union
@@ -17,8 +19,8 @@ from scipy.spatial.distance import cdist
 # Cached distribution
 DIST = scipy_stats.norm(0, 1)
 SAND_DIST = scipy_stats.norm(0, 2)
-X_STEP = 10
-Y_STEP = 10
+X_STEP = 4
+Y_STEP = 4
 
 
 @functools.lru_cache()
@@ -121,10 +123,22 @@ class ScoredPoint:
             b = np.array(self.goal)
             goal_dist = np.linalg.norm(a - b)
 
-        max_target_dist = 200 + skill
-        max_dist = standard_ppf(0.99) * (max_target_dist / skill) + max_target_dist
-        max_dist *= 1.10
-        self._h_cost = (2 if in_sand else 1) * goal_dist / max_dist
+
+        #TODO: adjust this
+        if in_sand:
+            max_target_dist = 200 + skill
+            max_dist = standard_ppf(0.99) * (max_target_dist / skill) + max_target_dist
+            max_dist *= 1.10 #not 1.1 if landing is in sand, meaning not admisible heuristic
+
+            max_sand = max_target_dist/2
+
+            self._h_cost = ((goal_dist - max_sand) / max_dist) + max_sand/max_dist
+        else:
+            max_target_dist = 200 + skill
+            max_dist = standard_ppf(0.99) * (max_target_dist / skill) + max_target_dist
+            max_dist *= 1.10 #not 1.1 if landing is in sand, meaning not admisible heuristic
+            self._h_cost = goal_dist / max_dist
+
 
         self._f_cost = self.actual_cost + self.h_cost
 
@@ -199,7 +213,7 @@ class Player:
         self.max_sand_ddist = scipy_stats.norm(max_dist/2, 2 * max_dist / self.skill)
 
         # Conf level
-        self.conf = 0.95
+        self.conf = 0.99 #TODO: base this off of the len(np_map_points? and skill)
         if self.skill < 40:
             self.conf = 0.75
 
@@ -212,8 +226,7 @@ class Player:
                 gx, gy = float(target.x), float(target.y)
                 self.goal = float(target.x), float(target.y)
                 self._initialize_map_points((gx, gy), golf_map)
-                # print(f"done init map with {len(self.np_map_points)} points")
-
+                print(f"done init map with {len(self.np_map_points)} points")
 
     @functools.lru_cache()
     def _max_ddist_ppf(self, conf: float):
@@ -269,51 +282,65 @@ class Player:
         return reachable_points, goal_distances
 
     def next_target(self, curr_loc: Tuple[float, float], goal: Point2D, conf: float) -> Union[None, Tuple[float, float]]:
-        point_goal = float(goal.x), float(goal.y)
-        heap = [ScoredPoint(curr_loc, point_goal, 0.0, in_sand=self.is_in_sand(curr_loc))]
-        start_point = heap[0].point
-        # Used to cache the best cost and avoid adding useless points to the heap
-        best_cost = {tuple(curr_loc): 0.0}
-        visited = set()
-        points_checked = 0
-        while len(heap) > 0:
-            next_sp = heapq.heappop(heap)
-            next_p = next_sp.point
+        import cProfile
+        import pstats
+        with cProfile.Profile() as pr:
+            point_goal = float(goal.x), float(goal.y)
+            heap = [ScoredPoint(curr_loc, point_goal, 0.0, in_sand=self.is_in_sand(curr_loc))]
+            start_point = heap[0].point
+            # Used to cache the best cost and avoid adding useless points to the heap
+            best_cost = {tuple(curr_loc): 0.0}
+            visited = set()
+            points_checked = 0
+            while len(heap) > 0:
+                next_sp = heapq.heappop(heap)
+                next_p = next_sp.point
 
-            if next_p in visited:
-                continue
-            if next_sp.actual_cost > 10:
-                continue
-            if next_sp.actual_cost > 0 and not self.splash_zone_within_polygon(next_sp.previous.point, next_p, conf): #check if shooting from prev to here will land in bounds
-                if next_p in best_cost:
-                    del best_cost[next_p]
-                continue
-            visited.add(next_p)
+                if next_p in visited:
+                    continue
+                if next_sp.actual_cost > 10:
+                    continue
+                if next_sp.actual_cost > 0 and not self.splash_zone_within_polygon(next_sp.previous.point, next_p, conf): #check if shooting from prev to here will land in bounds
+                    if next_p in best_cost:
+                        del best_cost[next_p]
+                    continue
+                visited.add(next_p)
 
-            if np.linalg.norm(np.array(self.goal) - np.array(next_p)) <= 5.4 / 100.0:
-                # All we care about is the next point
-                # TODO: We need to check if the path length is <= 10, because if it isn't we probably need to
-                #  reduce the conf and try again for a shorter path.
-                while next_sp.previous.point != start_point:
-                    next_sp = next_sp.previous
-                return next_sp.point
-            
-            # Add adjacent points to heap
-            reachable_points, goal_dists = self.numpy_adjacent_and_dist(next_p, conf)
-            for i in range(len(reachable_points)):
-                candidate_point = tuple(reachable_points[i])
-                goal_dist = goal_dists[i]
-                new_point = ScoredPoint(candidate_point, point_goal, next_sp.actual_cost + 1, next_sp,
-                                        goal_dist=goal_dist, skill=self.skill, in_sand=self.is_in_sand(candidate_point))
-                if candidate_point not in best_cost or best_cost[candidate_point] > new_point.actual_cost:
-                    points_checked += 1
-                    # if not self.splash_zone_within_polygon(new_point.previous.point, new_point.point, conf):
-                    #     continue
-                    best_cost[new_point.point] = new_point.actual_cost
-                    heapq.heappush(heap, new_point)
+                if np.linalg.norm(np.array(self.goal) - np.array(next_p)) <= 5.4 / 100.0:
+                    # All we care about is the next point
+                    # TODO: We need to check if the path length is <= 10, because if it isn't we probably need to
+                    #  reduce the conf and try again for a shorter path.
 
-        # No path available
-        return None
+                    #TODO: return path length
+                    path_length = 0
+                    while next_sp.previous.point != start_point:
+                        next_sp = next_sp.previous
+                        path_length += 1
+
+                    # if self.score == 1:
+                    #     stats = pstats.Stats(pr)
+                    #     stats.sort_stats(pstats.SortKey.CUMULATIVE)
+                    #     stats.print_stats(10)
+                    #     print(f"Points checked: {points_checked}")
+                    return next_sp.point, path_length
+                
+                # Add adjacent points to heap
+                reachable_points, goal_dists = self.numpy_adjacent_and_dist(next_p, conf)
+                for i in range(len(reachable_points)):
+                    candidate_point = tuple(reachable_points[i])
+                    goal_dist = goal_dists[i]
+                    new_point = ScoredPoint(candidate_point, point_goal, next_sp.actual_cost + 1, next_sp,
+                                            goal_dist=goal_dist, skill=self.skill, in_sand=self.is_in_sand(candidate_point))
+
+                    if candidate_point not in best_cost or best_cost[candidate_point] > new_point.actual_cost:
+                        # points_checked += 1
+                        # if not self.splash_zone_within_polygon(new_point.previous.point, new_point.point, conf):
+                        #     continue
+                        best_cost[new_point.point] = new_point.actual_cost
+                        heapq.heappush(heap, new_point)
+
+            # No path available
+            return None, None
 
     def _initialize_map_points(self, goal: Tuple[float, float], golf_map: Polygon):
         # Storing the points as numpy array
@@ -355,6 +382,8 @@ class Player:
         Returns:
             Tuple[float, float]: Return a tuple of distance and angle in radians to play the shot
         """
+        t1_start = time.perf_counter()
+        self.score = score
         if self.np_map_points is None:
             gx, gy = float(target.x), float(target.y)
             self.goal = float(target.x), float(target.y)
@@ -368,15 +397,44 @@ class Player:
         # print(f"Current shot in sand: {self.current_shot_in_sand}")
 
         target_point = None
-        confidence = self.conf
+        confidence = self.conf + 0.1
         cl = float(curr_loc.x), float(curr_loc.y)
-        while target_point is None:
-            if confidence <= 0.5:
-                return None
+        # while target_point is None:
+        #     if confidence <= 0.5:
+        #         return None
 
-            # print(f"turn # {score} searching with {confidence} confidence")
-            target_point = self.next_target(cl, target, confidence)
-            confidence -= 0.05
+        #     print(f"turn # {score} searching with {confidence} confidence")
+        #     target_point, target_path_length = self.next_target(cl, target, confidence)
+        #     confidence -= 0.05
+
+
+        t1_stop = time.perf_counter()
+        target_path_length = None
+        #if all other searches take this long, we can only afford to check once per turn
+        while(target_path_length is None or ((t1_stop - t1_start)*(target_path_length + score)) <= 600):
+            #TODO: what shoudl confidence be
+            confidence = max(confidence - 0.1, 0.6)
+            target_point2 = None
+            while target_point2 is None:
+                if confidence <= 0.5:
+                    break
+
+                print(f"turn # {score} searching with {confidence} confidence")
+                target_point2, target_path_length2 = self.next_target(cl, target, confidence)
+                confidence -= 0.05
+            else: #if no break
+                confidence += 0.05
+                if target_path_length is None or target_path_length2 + 1 <=  target_path_length:
+                    print("playing shot 2")
+                    target_point = target_point2
+                    target_path_length = target_path_length2
+            t1_stop = time.perf_counter()
+
+            if confidence <= 0.6:
+                break
+
+        if ((t1_stop - t1_start)*(target_path_length + score)) > 600:
+            self.conf -= 0.1
 
         # fixup target
         current_point = np.array(tuple(curr_loc)).astype(float)
@@ -397,9 +455,12 @@ class Player:
                     target_point = current_point + u * dist
                 target_point = prev_target
 
+
         cx, cy = current_point
         tx, ty = target_point
         angle = np.arctan2(ty - cy, tx - cx)
+        # splash = ShapelyPolygon(splash_zone(curr_loc.distance(Point2D(target_point, evaluate=False)), angle, confidence, self.skill, tuple(current_point), self.current_shot_in_sand))
+        # print(splash.intersection(self.shapely_poly).area/splash.area)
 
         rv = curr_loc.distance(Point2D(target_point, evaluate=False)), angle
         self.prev_rv = rv
