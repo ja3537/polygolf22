@@ -507,6 +507,10 @@ class GolfGame:
                     curr_loc.x + (1. + constants.extra_roll) * actual_distance * sympy.cos(actual_angle),
                     curr_loc.y + (1. + constants.extra_roll) * actual_distance * sympy.sin(actual_angle))
 
+        elif distance < constants.min_putter_dist and in_sand and distance <= (constants.max_dist+self.skills[player_idx])/2:
+            landing_point = sympy.Point2D(curr_loc.x+actual_distance*sympy.cos(actual_angle), curr_loc.y+actual_distance*sympy.sin(actual_angle))
+            final_point = sympy.Point2D(curr_loc.x+(1.+constants.extra_roll)*actual_distance*sympy.cos(actual_angle), curr_loc.y+(1.+constants.extra_roll)*actual_distance*sympy.sin(actual_angle))
+
         else:
             self.logger.debug("Provide invalid distance {:.3f}, distance should be < {}".format(float(distance), constants.max_dist+self.skills[player_idx]))
             landing_point = curr_loc
