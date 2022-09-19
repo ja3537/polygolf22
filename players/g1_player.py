@@ -190,6 +190,9 @@ class ScoredPoint:
 
 
 class Player:
+    AVOID_SAND_PENALTY = 2
+    FULL_CONF = 0.9999
+
     def __init__(self, skill: int, rng: np.random.Generator, logger: logging.Logger, golf_map: sympy.Polygon, start: sympy.geometry.Point2D, target: sympy.geometry.Point2D, sand_traps: List[sympy.Polygon], map_path: str, precomp_dir: str) -> None:
         """Initialise the player with given skill.
 
@@ -226,6 +229,7 @@ class Player:
         self.np_map_points = None
         self.map_points_in_sand_trap = None  # :: Set[Tuple[float, float]]
         self.sand_trap_matlab_polys = None   # :: List[Path]
+        self.sand_trap_shapely_polys = None
         self.mpl_paly = None
         self.shapely_poly = None
         self.goal = None
@@ -272,6 +276,26 @@ class Player:
             angle), float(conf), self.skill, current_point, in_sandtrap)
         return self.shapely_poly.contains(ShapelyPolygon(splash_zone_poly_points))
 
+    def splash_zone_within_sand(self, current_point: Tuple[float, float], target_point: Tuple[float, float], conf: float) -> bool:
+        if type(current_point) == Point2D:
+            current_point = tuple(Point2D)
+
+        if type(target_point) == Point2D:
+            target_point = tuple(Point2D)
+
+        distance = np.linalg.norm(np.array(current_point).astype(
+            float) - np.array(target_point).astype(float))
+        cx, cy = current_point
+        tx, ty = target_point
+        angle = np.arctan2(float(ty) - float(cy), float(tx) - float(cx))
+        splash_zone_poly_points = splash_zone(float(distance), float(
+            angle), float(conf), self.skill, current_point, current_point in self.map_points_in_sand_trap)
+
+        for sand_trap in self.sand_trap_shapely_polys:
+            if sand_trap.intersects(ShapelyPolygon(splash_zone_poly_points)):
+                return True
+        return False
+
     def numpy_adjacent_and_dist(self, point: Tuple[float, float], conf: float, in_sandtrap: bool):
         cloc_distances = cdist(self.np_map_points, np.array(
             [np.array(point)]), 'euclidean')
@@ -300,11 +324,14 @@ class Player:
         while len(heap) > 0:
             next_sp = heapq.heappop(heap)
             next_p = next_sp.point
+            actual_cost = next_sp.actual_cost
 
             if next_p in visited:
                 continue
             if next_sp.actual_cost > 10:
                 continue
+            if next_sp.actual_cost > 0 and self.splash_zone_within_sand(next_sp.previous.point, next_p, self.FULL_CONF):
+                actual_cost += self.AVOID_SAND_PENALTY
             if next_sp.actual_cost > 0 and not self.splash_zone_within_polygon(next_sp.previous.point, next_p, conf):
                 if next_p in best_cost:
                     del best_cost[next_p]
@@ -326,7 +353,7 @@ class Player:
             for i in range(len(reachable_points)):
                 candidate_point = tuple(reachable_points[i])
                 goal_dist = goal_dists[i]
-                new_point = ScoredPoint(candidate_point, point_goal, next_sp.actual_cost + 1, next_sp,
+                new_point = ScoredPoint(candidate_point, point_goal, actual_cost + 1, next_sp,
                                         goal_dist=goal_dist, skill=self.skill)
                 if candidate_point not in best_cost or best_cost[candidate_point] > new_point.actual_cost:
                     points_checked += 1
@@ -343,6 +370,8 @@ class Player:
         self.mpl_poly = sympy_poly_to_mpl(golf_map)
         self.shapely_poly = sympy_poly_to_shapely(golf_map)
         self.sand_trap_matlab_polys = [sympy_poly_to_mpl(
+            sand_trap) for sand_trap in sand_traps]
+        self.sand_trap_shapely_polys = [sympy_poly_to_shapely(
             sand_trap) for sand_trap in sand_traps]
 
         pp = list(poly_to_points(golf_map))
