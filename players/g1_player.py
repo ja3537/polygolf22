@@ -266,8 +266,10 @@ class Player:
         cx, cy = current_point
         tx, ty = target_point
         angle = np.arctan2(float(ty) - float(cy), float(tx) - float(cx))
+        in_sandtrap = is_in_sand_trap(
+            current_point, self.sand_trap_matlab_polys, cache=self.map_points_in_sand_trap)
         splash_zone_poly_points = splash_zone(float(distance), float(
-            angle), float(conf), self.skill, current_point, current_point in self.map_points_in_sand_trap)
+            angle), float(conf), self.skill, current_point, in_sandtrap)
         return self.shapely_poly.contains(ShapelyPolygon(splash_zone_poly_points))
 
     def numpy_adjacent_and_dist(self, point: Tuple[float, float], conf: float, in_sandtrap: bool):
