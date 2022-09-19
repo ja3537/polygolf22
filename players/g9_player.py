@@ -99,8 +99,8 @@ def sympy_poly_to_shapely(sympy_poly: Polygon) -> ShapelyPolygon:
 class ScoredPoint:
     """Scored point class for use in A* search algorithm"""
 
-    def __init__(self, point: Tuple[float, float], goal: Tuple[float, float], in_sand_trap: bool, actual_cost=float('inf'), previous=None,
-                 goal_dist=None, skill=50):
+    def __init__(self, point: Tuple[float, float], goal: Tuple[float, float], actual_cost=float('inf'), previous=None,
+                 goal_dist=None, skill=50, in_sand_trap=False):
         self.point = point
         self.goal = goal
 
@@ -115,6 +115,7 @@ class ScoredPoint:
         max_target_dist = 200 + skill
         max_dist = standard_ppf(0.99) * (max_target_dist / skill) + max_target_dist
         max_dist *= 1.10
+        
         if in_sand_trap:
             self._h_cost = ((goal_dist - max_dist / 2) / max_dist) + 1
         else:
@@ -247,16 +248,17 @@ class Player:
         return reachable_points, goal_distances
 
     def in_sand_trap(self, curr_loc):
+        curr_pt = ShapelyPoint(curr_loc[0], curr_loc[1])
         for trap in self.sand_traps:
-            if trap.contains(curr_loc):
+            if trap.contains(curr_pt):
                 return True
         return False
 
     def next_target(self, curr_loc: Tuple[float, float], goal: Point2D, conf: float) -> Union[
         None, Tuple[float, float]]:
         point_goal = float(goal.x), float(goal.y)
-        in_sand_trap = self.in_sand_trap(curr_loc)
-        heap = [ScoredPoint(curr_loc, point_goal, in_sand_trap, 0.0)]
+        curr_loc_in_sand_trap = self.in_sand_trap(curr_loc)
+        heap = [ScoredPoint(curr_loc, point_goal, 0.0, in_sand_trap=curr_loc_in_sand_trap)]
         start_point = heap[0].point
         # Used to cache the best cost and avoid adding useless points to the heap
         best_cost = {tuple(curr_loc): 0.0}
@@ -290,8 +292,8 @@ class Player:
                 candidate_point = tuple(reachable_points[i])
                 goal_dist = goal_dists[i]
                 reachable_in_sand_trap=self.in_sand_trap(reachable_points[i])
-                new_point = ScoredPoint(candidate_point, point_goal, reachable_in_sand_trap, next_sp.actual_cost + 1, next_sp,
-                                        goal_dist=goal_dist, skill=self.skill)
+                new_point = ScoredPoint(candidate_point, point_goal, next_sp.actual_cost + 1, next_sp,
+                                        goal_dist=goal_dist, skill=self.skill, in_sand_trap=reachable_in_sand_trap)
                 if candidate_point not in best_cost or best_cost[candidate_point] > new_point.actual_cost:
                     points_checked += 1
                     # if not self.splash_zone_within_polygon(new_point.previous.point, new_point.point, conf):
