@@ -3,6 +3,7 @@ import json
 import sys
 import os.path as path
 import os
+from itertools import pairwise, islice
 
 PLOT_DIR = "plots"
 
@@ -19,8 +20,8 @@ def plot_trials(logs):
     width = max(xs) - min(xs)
     height = max(ys) - min(ys)
 
-    plt.title(f"Map: {map_path}")
-    fig = plt.figure()
+    fig = plt.figure(layout="constrained")
+    fig.suptitle(f"Map: {map_path}")
     skill_subfigures = fig.subfigures(1, num_skill_levels)
     if num_skill_levels == 1:
         skill_subfigures = [skill_subfigures]
@@ -31,7 +32,12 @@ def plot_trials(logs):
 
         subfig = skill_subfigures[i]
         subfig.suptitle(f"skill: {skill}")
-        ax1, ax2 = subfig.subplots(2, 1, gridspec_kw={"height_ratios": [2, 1]})
+        # ax1, ax2 = subfig.subplots(2, 1, gridspec_kw={"height_ratios": [2, 1]})
+
+        gs = subfig.add_gridspec(2,2, height_ratios=[2, 1])
+        ax1 = subfig.add_subplot(gs[0, :])
+        ax2 = subfig.add_subplot(gs[1, 0])
+        ax3 = subfig.add_subplot(gs[1, 1])
 
         ax1.set_aspect(width / height)
         ax1.axis("off")
@@ -56,7 +62,7 @@ def plot_trials(logs):
                     linewidth=1,
                 )
 
-        opacity = max(1 / len(logs), 0.05)
+        opacity = max(1 / len(skill_logs), 0.05)
         for log in skill_logs:
             lands = log["landing_history"]["0"]
             ends = log["ending_history"]["0"]
@@ -67,15 +73,16 @@ def plot_trials(logs):
                 land_x, land_y = lands[n]
                 end_x, end_y = ends[n]
                 ax1.plot(
-                    [last_x, land_x], [last_y, land_y], color="black", alpha=opacity
+                    [last_x, land_x], [last_y, land_y], color="blue", alpha=opacity, linewidth=1
                 )
                 ax1.arrow(
                     land_x,
                     land_y,
                     end_x - land_x,
                     end_y - land_y,
-                    color="black",
+                    color="red",
                     alpha=0.5,
+                    linewidth=1,
                     head_width=4,
                     head_length=4,
                     length_includes_head=True,
@@ -95,6 +102,18 @@ def plot_trials(logs):
         ax2.set_ylabel("trials")
         ax2.set_xticks(list(shot_count.keys()))
 
+        miss_count = {}
+        for log in skill_logs:
+            misses = sum(end_a == end_b for (end_a, end_b) in pairwise(log["ending_history"]["0"]))
+            if not misses in miss_count:
+                miss_count[misses] = 0
+            miss_count[misses] += 1
+
+        ax3.bar(*list(zip(*miss_count.items())))
+        ax3.set_xlabel("misses")
+        ax3.set_ylabel("trials")
+        ax3.set_xticks(list(miss_count.keys()))
+    
     map_basename = path.splitext(map_path)[0]
     target_path = path.join("plots", f"{map_basename}.svg")
     os.makedirs(path.dirname(target_path), exist_ok=True)
