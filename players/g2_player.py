@@ -6,21 +6,22 @@ import functools
 import sympy
 import logging
 import heapq
-import time
+from time import perf_counter
 from scipy import stats as scipy_stats
-
+import random
+import matplotlib.pyplot as plt
 from typing import Tuple, Iterator, List, Union
 from sympy.geometry import Polygon, Point2D
 from matplotlib.path import Path
-from shapely.geometry import Polygon as ShapelyPolygon, Point as ShapelyPoint, shape as ShapelyShape
+from shapely.geometry import Polygon as ShapelyPolygon, Point as ShapelyPoint, shape as ShapelyShape, LineString as ShapelyLineString
 from scipy.spatial.distance import cdist
 
 
 # Cached distribution
 DIST = scipy_stats.norm(0, 1)
 SAND_DIST = scipy_stats.norm(0, 2)
-X_STEP = 4
-Y_STEP = 4
+X_STEP = 5
+Y_STEP = 5
 
 
 @functools.lru_cache()
@@ -112,6 +113,7 @@ def sympy_poly_to_shapely(sympy_poly: Polygon) -> ShapelyPolygon:
 class ScoredPoint:
     """Scored point class for use in A* search algorithm"""
     def __init__(self, point: Tuple[float, float], goal: Tuple[float, float], actual_cost=float('inf'), previous=None, goal_dist=None, skill=50, in_sand=False):
+        self.timer_start = perf_counter()
         self.point = point
         self.goal = goal
 
@@ -123,23 +125,29 @@ class ScoredPoint:
             b = np.array(self.goal)
             goal_dist = np.linalg.norm(a - b)
 
+        # max_target_dist = 200 + skill
+        # max_dist = standard_ppf(0.99) * (max_target_dist / skill) + max_target_dist
+        # max_dist *= 1.10
+        # self._h_cost = (2 if in_sand else 1) * goal_dist / max_dist
 
-        #TODO: adjust this
+        # self._f_cost = self.actual_cost + self.h_cost
+
+        # #TODO: adjust this
+        max_target_dist = 200 + skill
+        max_dist = standard_ppf(0.99) * (max_target_dist / skill) + max_target_dist
+        max_dist *= 1.10 #not 1.1 if landing is in sand, meaning not admisible heuristic
+        self._h_cost = goal_dist / max_dist + (max_dist/skill)
+
+        # we want to slightly favor out of sand than in sand if distance is same bc of stdev
         if in_sand:
-            max_target_dist = 200 + skill
-            max_dist = standard_ppf(0.99) * (max_target_dist / skill) + max_target_dist
-            max_dist *= 1.10 #not 1.1 if landing is in sand, meaning not admisible heuristic
-
             max_sand = max_target_dist/2
+            self._h_cost = max_sand/max_sand + (goal_dist-max_sand)/max_dist + (max_dist/skill)
 
-            self._h_cost = ((goal_dist - max_sand) / max_dist) + max_sand/max_dist
-        else:
-            max_target_dist = 200 + skill
-            max_dist = standard_ppf(0.99) * (max_target_dist / skill) + max_target_dist
-            max_dist *= 1.10 #not 1.1 if landing is in sand, meaning not admisible heuristic
-            self._h_cost = goal_dist / max_dist
+        # given a point 21 and 20 away, we want to do the one with putter
+        if goal_dist > 20:
+            self._h_cost += 1
 
-
+    
         self._f_cost = self.actual_cost + self.h_cost
 
     @property
@@ -202,20 +210,15 @@ class Player:
         self.rng = rng
         self.logger = logger
         self.np_map_points = None
-        self.mpl_paly = None
+        self.mpl_poly = None
         self.shapely_poly = None
         self.goal = None
         self.prev_rv = None
-
+        self.shapely_goal = None
         # Cached data
         max_dist = 200 + self.skill
         self.max_ddist = scipy_stats.norm(max_dist, max_dist / self.skill)
         self.max_sand_ddist = scipy_stats.norm(max_dist/2, 2 * max_dist / self.skill)
-
-        # Conf level
-        self.conf = 0.99 #TODO: base this off of the len(np_map_points? and skill)
-        if self.skill < 40:
-            self.conf = 0.75
 
         self.map_points_is_sand = {}
         self.sand_traps = [sympy_poly_to_shapely(sympy_poly) for sympy_poly in sand_traps]
@@ -225,8 +228,15 @@ class Player:
         if self.np_map_points is None:
                 gx, gy = float(target.x), float(target.y)
                 self.goal = float(target.x), float(target.y)
+                self.shapely_goal = ShapelyPoint(self.goal[0], self.goal[1])
                 self._initialize_map_points((gx, gy), golf_map)
                 print(f"done init map with {len(self.np_map_points)} points")
+
+        # Conf level
+        self.conf = 0.99
+        # if self.skill < 40:
+        #     self.conf = 0.75
+
 
     @functools.lru_cache()
     def _max_ddist_ppf(self, conf: float):
@@ -265,7 +275,7 @@ class Player:
         shapely_splash_zone_poly_points = ShapelyPolygon(splash_zone_poly_points)
 
         if self.shapely_poly.contains(shapely_splash_zone_poly_points):
-            if not self.is_in_sand(target_point):
+            if not self.is_in_sand(target_point) and not shapely_splash_zone_poly_points.contains(self.shapely_goal):
                 total_overlap = sum([shapely_splash_zone_poly_points.intersection(sand_trap).area for sand_trap in self.sand_traps if shapely_splash_zone_poly_points.intersects(self.shapely_poly)])
                 return total_overlap/shapely_splash_zone_poly_points.area <= 1 - conf
             return True
@@ -284,6 +294,8 @@ class Player:
     def next_target(self, curr_loc: Tuple[float, float], goal: Point2D, conf: float) -> Union[None, Tuple[float, float]]:
         import cProfile
         import pstats
+
+        last_checked_time = perf_counter()
         with cProfile.Profile() as pr:
             point_goal = float(goal.x), float(goal.y)
             heap = [ScoredPoint(curr_loc, point_goal, 0.0, in_sand=self.is_in_sand(curr_loc))]
@@ -293,6 +305,11 @@ class Player:
             visited = set()
             points_checked = 0
             while len(heap) > 0:
+                if perf_counter() - last_checked_time >= 100: #maybe do based on len(heap)
+                    # print(f"Checked {points_checked} points in {perf_counter() - last_checked_time} seconds")
+                    last_checked_time = perf_counter()
+                    conf -= 0.1
+
                 next_sp = heapq.heappop(heap)
                 next_p = next_sp.point
 
@@ -311,7 +328,6 @@ class Player:
                     # TODO: We need to check if the path length is <= 10, because if it isn't we probably need to
                     #  reduce the conf and try again for a shorter path.
 
-                    #TODO: return path length
                     path_length = 0
                     while next_sp.previous.point != start_point:
                         next_sp = next_sp.previous
@@ -333,7 +349,7 @@ class Player:
                                             goal_dist=goal_dist, skill=self.skill, in_sand=self.is_in_sand(candidate_point))
 
                     if candidate_point not in best_cost or best_cost[candidate_point] > new_point.actual_cost:
-                        # points_checked += 1
+                        points_checked += 1
                         # if not self.splash_zone_within_polygon(new_point.previous.point, new_point.point, conf):
                         #     continue
                         best_cost[new_point.point] = new_point.actual_cost
@@ -382,11 +398,12 @@ class Player:
         Returns:
             Tuple[float, float]: Return a tuple of distance and angle in radians to play the shot
         """
-        t1_start = time.perf_counter()
+        self.turn_start = perf_counter()
         self.score = score
         if self.np_map_points is None:
             gx, gy = float(target.x), float(target.y)
             self.goal = float(target.x), float(target.y)
+            self.shapely_goal = ShapelyPoint(self.goal[0], self.goal[1])
             self._initialize_map_points((gx, gy), golf_map) ## initrialize at runtime? multi thread it?
 
         # Optimization to retry missed shots
@@ -399,20 +416,12 @@ class Player:
         target_point = None
         confidence = self.conf + 0.1
         cl = float(curr_loc.x), float(curr_loc.y)
-        # while target_point is None:
-        #     if confidence <= 0.5:
-        #         return None
-
-        #     print(f"turn # {score} searching with {confidence} confidence")
-        #     target_point, target_path_length = self.next_target(cl, target, confidence)
-        #     confidence -= 0.05
-
-
-        t1_stop = time.perf_counter()
+        turn_end = perf_counter()
         target_path_length = None
+
         #if all other searches take this long, we can only afford to check once per turn
-        while(target_path_length is None or ((t1_stop - t1_start)*(target_path_length + score)) <= 600):
-            #TODO: what shoudl confidence be
+        while(target_path_length is None or ((turn_end - self.turn_start)*(target_path_length + score)) <= 600):
+            #TODO: what should confidence be
             confidence = max(confidence - 0.1, 0.6)
             target_point2 = None
             while target_point2 is None:
@@ -428,13 +437,10 @@ class Player:
                     print("playing shot 2")
                     target_point = target_point2
                     target_path_length = target_path_length2
-            t1_stop = time.perf_counter()
+            turn_end = perf_counter()
 
             if confidence <= 0.6:
                 break
-
-        if ((t1_stop - t1_start)*(target_path_length + score)) > 600:
-            self.conf -= 0.1
 
         # fixup target
         current_point = np.array(tuple(curr_loc)).astype(float)
@@ -443,17 +449,22 @@ class Player:
             v = np.array(target_point) - current_point
             # Unit vector pointing from current to target
             u = v / original_dist
-            if original_dist >= 20.0 or self.current_shot_in_sand:
-                roll_distance = original_dist /  20
-                max_offset = roll_distance
-                offset = 0
-                prev_target = target_point
-                while offset < max_offset and self.splash_zone_within_polygon(tuple(current_point), target_point, confidence):
-                    offset += 1
-                    dist = original_dist - offset
+
+            line = ShapelyLineString([self.goal, current_point])
+            if not any(line.intersects(sandtrap) for sandtrap in self.sand_traps):
+                print("playing shot fixed")
+                # If the line from the goal to the current point intersects a sand trap, we don't adjust
+                if original_dist >= 20.0 or self.current_shot_in_sand:
+                    roll_distance = original_dist /  20
+                    max_offset = roll_distance
+                    offset = 0
                     prev_target = target_point
-                    target_point = current_point + u * dist
-                target_point = prev_target
+                    while offset < max_offset and self.splash_zone_within_polygon(tuple(current_point), target_point, confidence):
+                        offset += 1
+                        dist = original_dist - offset
+                        prev_target = target_point
+                        target_point = current_point + u * dist
+                    target_point = prev_target
 
 
         cx, cy = current_point
