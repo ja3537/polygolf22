@@ -1,20 +1,19 @@
 import functools
+import heapq
 import logging
 import os
 import pickle
-import heapq
-from typing import Iterator, Tuple, Union, List
+from typing import Iterator, List, Tuple, Union
 
-from sympy import Triangle
+from matplotlib.path import Path
 import numpy as np
 import scipy
 from scipy import stats as scipy_stats
+from scipy.spatial.distance import cdist
 from shapely.geometry import Point, Polygon as ShapelyPolygon
 import sympy
+from sympy import Triangle
 from sympy.geometry import Point2D, Polygon
-from matplotlib.path import Path
-from shapely.geometry import Polygon as ShapelyPolygon, Point
-from scipy.spatial.distance import cdist
 
 STEP = 10.0  # chunk size
 DIST = scipy_stats.norm(0, 1)
@@ -37,7 +36,7 @@ def polygon_to_points(golf_map: sympy.Polygon) -> Iterator[Tuple[float, float]]:
         x_max = max(x, x_max)
         y_min = min(y, y_min)
         y_max = max(y, y_max)
-        
+
     x_step = STEP
     y_step = STEP
 
@@ -95,7 +94,7 @@ def splash_zone(distance: float, angle: float, conf: float, skill: int, current_
     distances = np.vectorize(standard_ppf)(conf_points) * (distance / skill) + distance
     angles = np.vectorize(standard_ppf)(conf_points) * (1/(2*skill)) + angle
     scale = 1.1 if distance <= 20 else 1.0
-    
+
     max_distance = distances[-1]*scale
     top_arc = spread_points(current_point, angles, max_distance, False)
 
@@ -202,7 +201,7 @@ class Player:
         self.poly_list = []
         self.poly_shapely = []
         self.prev_rv = None
-        
+
         max_distance = 200 + self.skill # -0.001 is what Group 9 did at the end
         self.max_ddist = scipy_stats.norm(max_distance, max_distance / self.skill)
         self.max_ddist_sand = scipy_stats.norm(max_distance / 2, 2 * max_distance / self.skill)
@@ -240,7 +239,7 @@ class Player:
     @functools.lru_cache()
     def _max_ddist_sand_ppf(self, conf: float):
         return self.max_ddist_sand.ppf(1.0 - conf)
-    
+
     def numpy_adjacent_and_dist(self, point: Tuple[float, float], conf: float):
         is_in_sandtrap = any([sandtrap.contains_point(point) for sandtrap in self.mpl_poly_trap])
         cloc_distances = cdist(self.np_points, np.array([np.array(point)]), 'euclidean')
@@ -285,7 +284,7 @@ class Player:
                 while next_sp.previous.point != start_point:
                     next_sp = next_sp.previous
                 return next_sp.point
-            
+
             # Add adjacent points to heap
             reachable_points, goal_dists = self.numpy_adjacent_and_dist(next_p, conf)
             for i in range(len(reachable_points)):
@@ -371,7 +370,7 @@ class Player:
             gx, gy = float(target.x), float(target.y)
             self.goal = float(target.x), float(target.y)
             self.polygon_to_np_points((gx, gy), golf_map, sand_traps)
-                
+
         # Optimization to retry missed shots
         if self.prev_rv is not None and curr_loc == prev_loc:
             return self.prev_rv
@@ -413,7 +412,7 @@ class Player:
         rv = curr_loc.distance(Point2D(target_point, evaluate=False)), angle
         self.prev_rv = rv
         return rv
-    
+
     # Functions from group 9 that are needed for precompute ###################
     # def get_center(self, row: int, column: int) -> Point:
     #     x = self.zero_center.x + column * STEP
