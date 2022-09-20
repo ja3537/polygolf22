@@ -181,8 +181,8 @@ class Player:
                  rng: np.random.Generator,
                  logger: logging.Logger,
                  golf_map: sympy.Polygon,
-                 start: sympy.geometry.Point2D,
-                 target: sympy.geometry.Point2D,
+                 start: Point2D,
+                 target: Point2D,
                  sand_traps: list[sympy.Polygon],
                  map_path: str,
                  precomp_dir: str) -> None:
@@ -193,8 +193,8 @@ class Player:
         rng (np.random.Generator): np random number generator, use for same player behavior
         logger (logging.Logger): logger use this like logger.info("message")
         golf_map (sympy.Polygon): Golf Map polygon
-        start (sympy.geometry.Point2D): Start location
-        target (sympy.geometry.Point2D): Target location
+        start (Point2D): Start location
+        target (Point2D): Target location
         map_path (str): File path to map
         precomp_dir (str): Directory path to store/load precomputation
         """
@@ -374,21 +374,21 @@ class Player:
     def play(self,
              score: int,
              golf_map: sympy.Polygon,
-             target: sympy.geometry.Point2D,
+             target: Point2D,
              sand_traps: list[sympy.Polygon],
-             curr_loc: sympy.geometry.Point2D,
-             prev_loc: sympy.geometry.Point2D,
-             prev_landing_point: sympy.geometry.Point2D,
+             curr_loc: Point2D,
+             prev_loc: Point2D,
+             prev_landing_point: Point2D,
              prev_admissible: bool) -> Tuple[float, float]:
         """Function which based on current game state returns the distance and angle, the shot must be played
 
         Args:
         score (int): Your total score including current turn
         golf_map (sympy.Polygon): Golf Map polygon
-        target (sympy.geometry.Point2D): Target location
-        curr_loc (sympy.geometry.Point2D): Your current location
-        prev_loc (sympy.geometry.Point2D): Your previous location. If you haven't played previously then None
-        prev_landing_point (sympy.geometry.Point2D): Your previous shot landing location. If you haven't played previously then None
+        target (Point2D): Target location
+        curr_loc (Point2D): Your current location
+        prev_loc (Point2D): Your previous location. If you haven't played previously then None
+        prev_landing_point (Point2D): Your previous shot landing location. If you haven't played previously then None
         prev_admissible (bool): Boolean stating if your previous shot was within the polygon limits. If you haven't played previously then None
 
         Returns:
