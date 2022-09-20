@@ -92,29 +92,47 @@ class TestPlayer:
         # (based on https://gis.stackexchange.com/questions/207731/generating-random-coordinates-in-multipolygon-in-python)
         points = []
         min_x, min_y, max_x, max_y = golf_map_with_holes.bounds
-        while len(points) < POINTS_PER_REGION*regions:
-            pt = shapely.geometry.Point(random.uniform(min_x, max_x), random.uniform(min_y, max_y))
-            if golf_map_with_holes.contains(pt):
-                points.append(pt)
+        # while len(points) < POINTS_PER_REGION*regions:
+        #     pt = shapely.geometry.Point(random.uniform(min_x, max_x), random.uniform(min_y, max_y))
+        #     if golf_map_with_holes.contains(pt):
+        #         points.append(pt)
+
+        # Generate a dense grid of points (0.5m spacing) within the bounds of a given map
+        # Produces more homogenous regions with centroids almost exactly in the middle
+        for x in np.arange(min_x, max_x, 0.5):
+            for y in np.arange(min_y, max_y, 0.5):
+                pt = shapely.geometry.Point(x, y)
+                if golf_map_with_holes.contains(pt):  # and not combined_buffer_zones.contains(pt):
+                    points.append(pt)
+
 
         # Cluster the random points into groups using kmeans
         points_df = pd.DataFrame([[pt.x, pt.y] for pt in points], columns=['x', 'y'])
         kmeans = sklearn.cluster.KMeans(n_clusters=regions, init='k-means++').fit(points_df)
 
+        # Find the centroids of the sandtraps and make a combined list:
+        st_centers = [shapely.geometry.Polygon(coords).centroid for coords in
+                      [list(st.exterior.coords) for st in sand_traps]]
+        center_points = shapely.geometry.MultiPoint(st_centers).union(
+            shapely.geometry.MultiPoint(kmeans.cluster_centers_))
+
         # Generate a voronoi diagram from the centers of the generated regions
-        center_points = shapely.geometry.MultiPoint(kmeans.cluster_centers_)
+        # and the centers of sandtraps:
+        # center_points = shapely.geometry.MultiPoint(kmeans.cluster_centers_)
         regions = shapely.ops.voronoi_diagram(center_points)
 
         # Intersect the generated regions with the given map
         regions = [region.intersection(golf_map_with_holes) for region in regions.geoms]
 
         # Plot the random points, cluster centers, and voronoi regions
+        plt.figure(dpi=200)
+        plt.axis('equal')
         plt.plot(*golf_map_with_holes.exterior.xy)
         plt.scatter([pt.x for pt in points], [pt.y for pt in points], s=5)
         plt.scatter([pt[0] for pt in kmeans.cluster_centers_], [pt[1] for pt in kmeans.cluster_centers_], color='red')
         for region in regions:
             plt.plot(*region.exterior.xy)
-        plt.show()
+        plt.savefig('voronoi_plot')
 
         return regions
 
