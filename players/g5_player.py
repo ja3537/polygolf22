@@ -10,7 +10,7 @@ from scipy import stats as scipy_stats
 from typing import Tuple, Iterator, List, Union
 from sympy.geometry import Polygon, Point2D
 from matplotlib.path import Path
-from shapely.geometry import Polygon as ShapelyPolygon, Point as ShapelyPoint
+from shapely.geometry import Polygon as ShapelyPolygon, Point as ShapelyPoint, LineString
 from scipy.spatial.distance import cdist
 
 
@@ -26,6 +26,7 @@ def standard_ppf(conf: float) -> float:
 
 
 def result_point(distance: float, angle: float, current_point: Tuple[float, float]) -> Tuple[float, float]:
+    """Current point + distance/angle -> Result point"""
     cx, cy = current_point
     nx = cx + distance * np.cos(angle)
     ny = cy + distance * np.sin(angle)
@@ -42,6 +43,7 @@ def spread_points(current_point, angles: np.array, distance, reverse) -> np.arra
 
 
 def splash_zone(distance: float, angle: float, conf: float, skill: int, current_point: Tuple[float, float]) -> np.array:
+    """Gives a polygon representing the total extent of possible landing points from taking this shot"""
     conf_points = np.linspace(1 - conf, conf, 5)
     distances = np.vectorize(standard_ppf)(conf_points) * (distance / skill) + distance
     angles = np.vectorize(standard_ppf)(conf_points) * (1/(2*skill)) + angle
@@ -61,6 +63,7 @@ def splash_zone(distance: float, angle: float, conf: float, skill: int, current_
 
 
 def poly_to_points(poly: Polygon) -> Iterator[Tuple[float, float]]:
+    """Get a grid of points overlaying the rectangular bounding box of the polygon"""
     x_min, y_min = float('inf'), float('inf')
     x_max, y_max = float('-inf'), float('-inf')
     for point in poly.vertices:
@@ -217,6 +220,7 @@ class Player:
         return np.linalg.norm(current_point - target_point) <= self._max_ddist_ppf(conf)
     
     def splash_zone_within_polygon(self, current_point: Tuple[float, float], target_point: Tuple[float, float], conf: float) -> bool:
+        """Determine if the possible landing points from taking this shot are all on land"""
         if type(current_point) == Point2D:
             current_point = tuple(Point2D)
 
@@ -263,11 +267,17 @@ class Player:
             if next_sp.actual_cost > 10:
                 continue
             if next_sp.actual_cost > 0 and not self.splash_zone_within_polygon(next_sp.previous.point, next_p, conf):
+                # Jeff: If this "splash zone" of aiming for this point is not fully in-bounds
+                #       delete the tracked best cost and skip enqueueing neighbors? why?
+                #       This is because they previously were checking before adding to the heap, but this causes
+                #       points to be checked for splash zone multiple times. Instead, they put it on the heap and
+                #       skip it when it's dequeued so it's only checked once per point.
                 if next_p in best_cost:
                     del best_cost[next_p]
                 continue
             visited.add(next_p)
 
+            # When we find the goal in the search, return the next point on the path that brings us towards the goal
             if np.linalg.norm(np.array(self.goal) - np.array(next_p)) <= 5.4 / 100.0:
                 # All we care about is the next point
                 # TODO: We need to check if the path length is <= 10, because if it isn't we probably need to
@@ -348,12 +358,16 @@ class Player:
 
         # fixup target
         current_point = np.array(tuple(curr_loc)).astype(float)
+        in_sand_trap = any([trap.contains_point(current_point) for trap in self.sand_traps_mpl_poly])
         if tuple(target_point) == self.goal:
             original_dist = np.linalg.norm(np.array(target_point) - current_point)
             v = np.array(target_point) - current_point
             # Unit vector pointing from current to target
             u = v / original_dist
-            if original_dist >= 20.0:
+            # Jeff: only fixup when shooting for the goal and not putting
+            if original_dist >= 20.0 or in_sand_trap:
+                # Jeff: this is wrong-ish, they can back up more than this, up to .09 of original_dist.
+                # roll_distance = (0.1 / 1.1) * original_dist
                 roll_distance = original_dist / 20
                 max_offset = roll_distance
                 offset = 0
@@ -363,6 +377,13 @@ class Player:
                     dist = original_dist - offset
                     prev_target = target_point
                     target_point = current_point + u * dist
+
+                    # Make sure we aren't rolling over sand
+                    target_to_goal = Path([target_point, self.goal])
+                    if any(trap.intersects_path(target_to_goal) for trap in self.sand_traps_mpl_poly):
+                        offset -= 1
+                        break
+
                 target_point = prev_target
 
         cx, cy = current_point
