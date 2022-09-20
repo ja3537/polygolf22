@@ -11,21 +11,18 @@ import scipy
 from scipy import stats as scipy_stats
 from shapely.geometry import Point, Polygon as ShapelyPolygon
 import sympy
-from sympy.geometry import Point2D, Polygon  # Polygon is unused
+from sympy.geometry import Point2D, Polygon
 from matplotlib.path import Path
 from shapely.geometry import Polygon as ShapelyPolygon, Point
 from scipy.spatial.distance import cdist
 
-STEP = 20.0  # chunk size == 1m
+STEP = 10.0  # chunk size
 DIST = scipy_stats.norm(0, 1)
-X_STEP = 20.0
-Y_STEP = 20.0
 
 
 @functools.lru_cache()
 def standard_ppf(conf: float) -> float:
     return DIST.ppf(conf)
-
 
 def polygon_to_points(golf_map: sympy.Polygon) -> Iterator[Tuple[float, float]]:
     """
@@ -42,8 +39,8 @@ def polygon_to_points(golf_map: sympy.Polygon) -> Iterator[Tuple[float, float]]:
         x_max = max(x, x_max)
         y_min = min(y, y_min)
         y_max = max(y, y_max)
-    x_step = X_STEP
-    y_step = Y_STEP
+    x_step = STEP
+    y_step = STEP
 
     x_current = x_min
     y_current = y_min
@@ -53,7 +50,6 @@ def polygon_to_points(golf_map: sympy.Polygon) -> Iterator[Tuple[float, float]]:
             y_current += y_step
         y_current = y_min
         x_current += x_step
-
 
 def sympy_polygon_to_shapely(polygon: sympy.Polygon) -> ShapelyPolygon:
     """
@@ -75,9 +71,9 @@ def sympy_tri_to_shapely(sympy_tri: Triangle) -> ShapelyPolygon:
 def sympy_polygon_to_mpl(sympy_poly: Polygon) -> Path:
     """Helper function to convert sympy Polygon to matplotlib Path object"""
     v = sympy_poly.vertices
+    v = list(v)
     v.append(v[0])
     return Path(v, closed=True)
-
 
 def sympy_tri_to_mpl(sympy_tri: Triangle) -> Path:
     """Helper function to convert sympy Polygon to matplotlib Path object"""
@@ -95,7 +91,6 @@ def spread_points(current_point, angles: np.array, distance, reverse) -> np.arra
     xs = np.cos(angles) * distance + curr_x
     ys = np.sin(angles) * distance + curr_y
     return np.column_stack((xs, ys))
-
 
 def splash_zone(distance: float, angle: float, conf: float, skill: int, current_point: Tuple[float, float]) -> np.array:
     conf_points = np.linspace(1 - conf, conf, 5)
@@ -204,48 +199,60 @@ class Player:
         self.np_points = None
         self.mpl_poly = None
         self.shapely_poly = None
-        self.mpl_poly_trap = None
+        self.mpl_poly_trap = [sympy_polygon_to_mpl(sandtrap) for sandtrap in sand_traps]
         self.shapely_poly_trap = None
         self.goal = None
         self.poly_list = []
         self.poly_shapely = []
         self.prev_rv = None
         
-
-        # Group 9 code needed for precompute() ################################
-        self.rows, self.columns = None, None
-        self.dmap, self.pmap = None, None
-        self.quick_map = ShapelyPolygon([(p.x, p.y) for p in golf_map.vertices])
-
-        x_min, y_min, max_x, max_y = self.quick_map.bounds
-        self.min_x = x_min
-        self.min_y = y_min
-        width, height = max_x - x_min, max_y - y_min
-
-        self.rows = int(np.ceil(height / STEP))
-        self.columns = int(np.ceil(width / STEP )) # STEP == self.cell_width??
-        self.zero_center = Point(x_min + STEP / 2, max_y - STEP / 2)
-
-#        precomp_path = os.path.join(precomp_dir, "{}.pkl".format(map_path))
-#         # precompute check
-#         if os.path.isfile(precomp_path):
-#             self.dmap = pickle.load(open(precomp_path, "rb"))
-#         else:
-#             self.precompute()
-#             pickle.dump(self.dmap, open(precomp_path, "wb"))
-#         # End #################################################################
-
-
         max_distance = 200 + self.skill # -0.001 is what Group 9 did at the end
         self.max_ddist = scipy_stats.norm(max_distance, max_distance / self.skill)
+        self.max_ddist_sand = scipy_stats.norm(max_distance / 2, 2 * max_distance / self.skill)
+
+        # # Group 9 code needed for precompute() ################################
+        # self.rows, self.columns = None, None
+        # self.dmap, self.pmap = None, None
+        # self.quick_map = ShapelyPolygon([(p.x, p.y) for p in golf_map.vertices])
+        # self.quick_sand = [ShapelyPolygon([(p.x, p.y) for p in sand_trap.vertices]) for sand_trap in sand_traps]
+
+        # x_min, y_min, max_x, max_y = self.quick_map.bounds
+        # self.min_x = x_min
+        # self.min_y = y_min
+        # width, height = max_x - x_min, max_y - y_min
+
+        # self.rows = int(np.ceil(height / STEP))
+        # self.columns = int(np.ceil(width / STEP )) # STEP == self.cell_width??
+        # self.zero_center = Point(x_min + STEP / 2, max_y - STEP / 2)
+
+    #    precomp_path = os.path.join(precomp_dir, "{}.pkl".format(map_path))
+    #     # precompute check
+    #     if os.path.isfile(precomp_path):
+    #         self.dmap = pickle.load(open(precomp_path, "rb"))
+    #     else:
+    #         self.precompute()
+    #         pickle.dump(self.dmap, open(precomp_path, "wb"))
+        # End #################################################################
+
+
+
     @functools.lru_cache()
     def _max_ddist_ppf(self, conf: float):
         return self.max_ddist.ppf(1.0 - conf)
+
+    @functools.lru_cache()
+    def _max_ddist_sand_ppf(self, conf: float):
+        return self.max_ddist_sand.ppf(1.0 - conf)
     
     def numpy_adjacent_and_dist(self, point: Tuple[float, float], conf: float):
+        is_in_sandtrap = any([sandtrap.contains_point(point) for sandtrap in self.mpl_poly_trap])
         cloc_distances = cdist(self.np_points, np.array([np.array(point)]), 'euclidean')
         cloc_distances = cloc_distances.flatten()
-        distance_mask = cloc_distances <= self._max_ddist_ppf(conf)
+
+        if is_in_sandtrap:
+            distance_mask = cloc_distances <= self._max_ddist_sand_ppf(conf)
+        else:
+            distance_mask = cloc_distances <= self._max_ddist_ppf(conf)
 
         reachable_points = self.np_points[distance_mask]
         goal_distances = self.np_goal_dist[distance_mask]
@@ -308,13 +315,13 @@ class Player:
         self.shapely_poly = sympy_polygon_to_shapely(golf_map)
         pp = list(polygon_to_points(golf_map))
         for point in pp:
-            yes = False
+            # no = True
             # Use matplotlib here because it's faster than shapely for this calculation...
-            for trap in sand_traps:
-                self.mpl_poly_trap = sympy_tri_to_mpl(trap)
-                if self.mpl_poly_trap.contains_point(point):
-                    yes = True
-            if self.mpl_poly.contains_point(point) and yes != True:
+            # for trap in sand_traps:
+            #     self.mpl_poly_trap = sympy_tri_to_mpl(trap)
+            #     if self.mpl_poly_trap.contains_point(point):
+            #         no = False
+            if self.mpl_poly.contains_point(point): # and no:
                 # map_points.append(point)
                 x, y = point
                 np_points.append(np.array([x, y]))
@@ -332,12 +339,7 @@ class Player:
         current_point = np.array(current_point).astype(float)
         target_point = np.array(target_point).astype(float)
 
-        distance = current_point - target_point
-        cx, cy = current_point
-        tx, ty = target_point
-        angle = np.arctan2(float(ty) - float(cy), float(tx) - float(cx))
-
-        return np.linalg.norm(distance) <= self._max_ddist_ppf(conf)
+        return np.linalg.norm(current_point - target_point) <= self._max_ddist_ppf(conf)
 
     def is_splash_zone_within_polygon(self, current_point: Tuple[float, float], target_point: Tuple[float, float], conf: float) -> bool:
         if type(current_point) == Point2D: current_point = tuple(Point2D)
@@ -369,9 +371,9 @@ class Player:
         Tuple[float, float]: Return a tuple of distance and angle in radians to play the shot
         """
         if self.np_points is None:
-                gx, gy = float(target.x), float(target.y)
-                self.goal = float(target.x), float(target.y)
-                self.polygon_to_np_points((gx, gy), golf_map, sand_traps)
+            gx, gy = float(target.x), float(target.y)
+            self.goal = float(target.x), float(target.y)
+            self.polygon_to_np_points((gx, gy), golf_map, sand_traps)
                 
         # Optimization to retry missed shots
         if self.prev_rv is not None and curr_loc == prev_loc:
@@ -416,58 +418,56 @@ class Player:
         return rv
     
     # Functions from group 9 that are needed for precompute ###################
-    def get_center(self, row: int, column: int) -> Point:
-        x = self.zero_center.x + column * STEP
-        y = self.zero_center.y + row * STEP
-        return Point(x, y)
+    # def get_center(self, row: int, column: int) -> Point:
+    #     x = self.zero_center.x + column * STEP
+    #     y = self.zero_center.y + row * STEP
+    #     return Point(x, y)
 
-    def get_row_col(self, x, y):
-        row = round((self.zero_center.y - y) / STEP)
-        column = round((x - self.zero_center.x) / STEP)
-        return row, column
+    # def get_row_col(self, x, y):
+    #     row = round((self.zero_center.y - y) / STEP)
+    #     column = round((x - self.zero_center.x) / STEP)
+    #     return row, column
 
-    """
-    def get_row(self, row):
-        return round((self.zero_center.y - row) / STEP)
-    def get_column(self, column):
-        return round((column - self.zero_center.x) / STEP)
-    """
+    # """
+    # def get_row(self, row):
+    #     return round((self.zero_center.y - row) / STEP)
+    # def get_column(self, column):
+    #     return round((column - self.zero_center.x) / STEP)
+    # """
 
-    def get_corners(self, row: int, column: int):
-        center = self.get_center(row, column)
-        offset = STEP / 2
-        x, y = center.x, center.y
-        upper_left = Point(x - offset, y + offset)
-        upper_right = Point(x + offset, y + offset)
-        lower_left = Point(x - offset, y - offset)
-        lower_right = Point(x + offset, y - offset)
+    # def get_corners(self, row: int, column: int):
+    #     center = self.get_center(row, column)
+    #     offset = STEP / 2
+    #     x, y = center.x, center.y
+    #     upper_left = Point(x - offset, y + offset)
+    #     upper_right = Point(x + offset, y + offset)
+    #     lower_left = Point(x - offset, y - offset)
+    #     lower_right = Point(x + offset, y - offset)
 
-        return [upper_left, upper_right, lower_left, lower_right]
+    #     return [upper_left, upper_right, lower_left, lower_right]
 
-    def precompute(self) -> None:
-        """Precomputing path."""
-        self.dmap = np.zeros((self.rows, self.columns), dtype=np.int8)
+    # def precompute(self) -> None:
+    #     """Precomputing path."""
+    #     self.dmap = np.zeros((self.rows, self.columns), dtype=np.int8)
 
-        for row in range(self.rows):
-            for column in range(self.columns):
-                water, land, sandtrap = 0, 0, 0
-                corners = self.get_corners(row, column)
+    #     for row in range(self.rows):
+    #         for column in range(self.columns):
+    #             water, land, sandtrap = 0, 0, 0
+    #             corners = self.get_corners(row, column)
 
-                for point in corners:
-                    if self.quick_map.contains(point):
-                        land += 1
-                    else:
-                        water += 1
-                    # or sandtrap += 1
+    #             for point in corners:
+    #                 if self.is_point_in_sand(point):
+    #                     sandtrap += 1
+    #                 elif self.quick_map.contains(point):
+    #                     land += 1
+    #                 else:
+    #                     water += 1
 
-                if land == 4:
-                    self.dmap[row, column] = 1
+    #             if land == 4:
+    #                 self.dmap[row, column] = 1
+    #             elif water == 4:
+    #                 self.dmap[row, column] = 0
+    #             else:
+    #                 self.dmap[row, column] = 2
 
-                elif water == 4:
-                    self.dmap[row, column] = 0
-                # elif sandtrap == 4
-                #   self.dmap[row, column] = 0 ?
-
-                else:
-                    self.dmap[row, column] = 0
     # End #####################################################################
