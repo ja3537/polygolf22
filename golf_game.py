@@ -849,6 +849,7 @@ class GolfGame:
         step_play_dict["land_in_sand"] = land_in_sand
         step_play_dict["roll_in_sand"] = roll_in_sand
 
+
         self.landing_history[player_idx].append(
             (float(observed_landing_point.x), float(observed_landing_point.y))
         )
@@ -857,3 +858,4 @@ class GolfGame:
         )
 
         return step_play_dict
+
