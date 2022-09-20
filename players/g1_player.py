@@ -140,6 +140,8 @@ def find_map_points_in_sand_trap(map_points: List[Tuple[float, float]], sand_tra
 
     return points_in_sand_trap
 
+def roll(src: Tuple[float, float], dst: Tuple[float, float], rolling_factor: float) -> Tuple[float, float]:
+    return dst
 
 class ScoredPoint:
     """Scored point class for use in A* search algorithm"""
@@ -329,8 +331,9 @@ class Player:
                 return next_sp.point
 
             # Add adjacent points to heap
+            next_p_after_rolling = next_p if next_sp.previous is None else roll(next_sp.previous.point, next_p, 1.1)
             reachable_points, goal_dists = self.numpy_adjacent_and_dist(
-                next_p, conf, is_in_sand_trap(next_p, self.sand_trap_matlab_polys, cache=self.map_points_in_sand_trap))
+                next_p_after_rolling, conf, is_in_sand_trap(next_p, self.sand_trap_matlab_polys, cache=self.map_points_in_sand_trap))
 
             for i in range(len(reachable_points)):
                 candidate_point = tuple(reachable_points[i])
