@@ -254,25 +254,6 @@ class Player:
     def _max_sandtrap_ddist_ppf(self, conf:float):
         return self.max_sandtrap_ddist.ppf(1.0-conf)
 
-    '''
-    def reachable_point(self, current_point: Tuple[float, float], target_point: Tuple[float, float], conf: float, in_sandtrap: bool) -> bool:
-        """Determine whether the point is reachable with confidence [conf] based on our player's skill"""
-        if type(current_point) == Point2D:
-            current_point = tuple(current_point)
-        if type(target_point) == Point2D:
-            target_point = tuple(target_point)
-
-        current_point = np.array(current_point).astype(float)
-        target_point = np.array(target_point).astype(float)
-
-        if in_sandtrap:
-
-            return np.linalg.norm(current_point - target_point) <= self._max_sandtrap_ddist_ppf(conf)
-
-        else:
-            return np.linalg.norm(current_point - target_point) <= self._max_ddist_ppf(conf)
-        '''
-
     def splash_zone_within_polygon(self, current_point: Tuple[float, float], target_point: Tuple[float, float], conf: float) -> bool:
         if type(current_point) == Point2D:
             current_point = tuple(Point2D)
