@@ -92,14 +92,14 @@ def poly_to_points(poly: Polygon) -> Iterator[Tuple[float, float]]:
 
 def sympy_poly_to_mpl(sympy_poly: Polygon) -> Path:
     """Helper function to convert sympy Polygon to matplotlib Path object"""
-    v = list(sympy_poly.vertices)
+    v = sympy_poly.vertices
     v.append(v[0])
     return Path(v, closed=True)
 
 
 def sympy_poly_to_shapely(sympy_poly: Polygon) -> ShapelyPolygon:
     """Helper function to convert sympy Polygon to shapely Polygon object"""
-    v = sympy_poly.vertices
+    v = list(sympy_poly.vertices)
     v.append(v[0])
     return ShapelyPolygon(v)
 
@@ -265,7 +265,7 @@ class Player:
         angle = np.arctan2(float(ty) - float(cy), float(tx) - float(cx))
         splash_zone_poly_points = splash_zone(float(distance), float(angle), float(conf), self.skill, current_point, current_in_sand)
 
-        shapely_splash_zone_poly_points = Polygon(splash_zone_poly_points)
+        shapely_splash_zone_poly_points = ShapelyPolygon(splash_zone_poly_points)
 
 
         if self.shapely_poly.contains(shapely_splash_zone_poly_points):
@@ -289,8 +289,11 @@ class Player:
         return reachable_points, goal_distances
 
     def in_sand_trap(self, curr_loc):
-        curr_pt = ShapelyPoint(curr_loc[0], curr_loc[1])
-        if(curr_loc not in self.sand_traps):
+        if (type(curr_loc) == np.ndarray):	
+            curr_loc = Point2D(curr_loc[0], curr_loc[1])
+
+        if(curr_loc not in self.sand_points):
+            curr_pt = ShapelyPoint(curr_loc[0], curr_loc[1])
             self.sand_points[curr_loc]= any(trap.contains(curr_pt) for trap in self.sand_traps)
 
         return self.sand_points[curr_loc]
