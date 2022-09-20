@@ -15,6 +15,7 @@ from scipy.spatial.distance import cdist
 
 # Cached distribution
 DIST = scipy_stats.norm(0, 1)
+SAND_DIST = scipy_stats.norm(0, 2)
 X_STEP = 5.0
 Y_STEP = 5.0
 
@@ -23,6 +24,8 @@ Y_STEP = 5.0
 def standard_ppf(conf: float) -> float:
     return DIST.ppf(conf)
 
+def sand_standard_ppf(conf: float) -> float:
+    return SAND_DIST.ppf(conf)
 
 def result_point(distance: float, angle: float, current_point: Tuple[float, float]) -> Tuple[float, float]:
     cx, cy = current_point
@@ -40,17 +43,22 @@ def spread_points(current_point, angles: np.array, distance, reverse) -> np.arra
     return np.column_stack((xs, ys))
 
 
-def splash_zone(distance: float, angle: float, conf: float, skill: int, current_point: Tuple[float, float]) -> np.array:
+def splash_zone(distance: float, angle: float, conf: float, skill: int, current_point: Tuple[float, float], in_sand_trap: bool) -> np.array:
     conf_points = np.linspace(1 - conf, conf, 5)
-    distances = np.vectorize(standard_ppf)(conf_points) * (distance / skill) + distance
-    angles = np.vectorize(standard_ppf)(conf_points) * (1 / (2 * skill)) + angle
+
+    if in_sand_trap:
+        distances = np.vectorize(sand_standard_ppf)(conf_points) * (distance / skill) + (distance/2)
+        angles = np.vectorize(sand_standard_ppf)(conf_points) * (1 / (2 * skill)) + angle*2
+    else:
+        distances = np.vectorize(standard_ppf)(conf_points) * (distance / skill) + distance
+        angles = np.vectorize(standard_ppf)(conf_points) * (1 / (2 * skill)) + angle
     scale = 1.1
-    if distance <= 20:
+    if distance <= 20 and not in_sand_trap:
         scale = 1.0
     max_distance = distances[-1] * scale
     top_arc = spread_points(current_point, angles, max_distance, False)
 
-    if distance > 20:
+    if distance > 20 or in_sand_trap:
         min_distance = distances[0]
         bottom_arc = spread_points(current_point, angles, min_distance, True)
         return np.concatenate((top_arc, bottom_arc, np.array([top_arc[0]])))
@@ -84,7 +92,7 @@ def poly_to_points(poly: Polygon) -> Iterator[Tuple[float, float]]:
 
 def sympy_poly_to_mpl(sympy_poly: Polygon) -> Path:
     """Helper function to convert sympy Polygon to matplotlib Path object"""
-    v = sympy_poly.vertices
+    v = list(sympy_poly.vertices)
     v.append(v[0])
     return Path(v, closed=True)
 
@@ -114,12 +122,10 @@ class ScoredPoint:
 
         if in_sand_trap:
             max_target_dist = (200 + skill) / 2
-            max_dist = standard_ppf(0.99) * (max_target_dist / skill) + max_target_dist
-            max_dist *= 1.10
         else:
             max_target_dist = 200 + skill
-            max_dist = standard_ppf(0.99) * (max_target_dist / skill) + max_target_dist
-            max_dist *= 1.10
+        max_dist = standard_ppf(0.99) * (max_target_dist / skill) + max_target_dist
+        max_dist *= 1.10
 
         if in_sand_trap:
             self._h_cost = ((goal_dist - max_dist / 2) / max_dist) + 1
@@ -198,7 +204,7 @@ class Player:
         # Cached data
         max_dist = 200 + self.skill
         self.max_ddist = scipy_stats.norm(max_dist, max_dist / self.skill)
-
+        self.max_sand_ddist =scipy_stats.norm(max_dist/2, max_dist / self.skill*2)
         # Conf level
         self.conf = 0.95
         if self.skill < 40:
@@ -209,10 +215,20 @@ class Player:
         for trap in sand_traps:
             self.sand_traps.append(ShapelyPolygon([(p.x, p.y) for p in trap.vertices]))
 
+        self.sand_points={}
+
+        if self.np_map_points is None:
+            self.goal = float(target.x), float(target.y)
+            self._initialize_map_points(self.goal, golf_map)
+
 
     @functools.lru_cache()
     def _max_ddist_ppf(self, conf: float):
         return self.max_ddist.ppf(1.0 - conf)
+
+    @functools.lru_cache()
+    def _max_sand_ddist_ppf(self, conf: float):
+        return self.max_sand_ddist.ppf(1.0 - conf)
 
     def reachable_point(self, current_point: Tuple[float, float], target_point: Tuple[float, float],
                         conf: float) -> bool:
@@ -225,6 +241,9 @@ class Player:
         current_point = np.array(current_point).astype(float)
         target_point = np.array(target_point).astype(float)
 
+        if self.in_sand_trap(current_point):
+            return np.linalg.norm(current_point - target_point) <= self._max_sand_ddist_ppf(conf)
+
         return np.linalg.norm(current_point - target_point) <= self._max_ddist_ppf(conf)
 
     def splash_zone_within_polygon(self, current_point: Tuple[float, float], target_point: Tuple[float, float],
@@ -235,17 +254,34 @@ class Player:
         if type(target_point) == Point2D:
             target_point = tuple(Point2D)
 
+        current_in_sand = self.in_sand_trap(current_point)
         distance = np.linalg.norm(np.array(current_point).astype(float) - np.array(target_point).astype(float))
+        if current_in_sand:
+            distance = np.linalg.norm(np.array(current_point).astype(float) - np.array(target_point).astype(float))/2
+
+
         cx, cy = current_point
         tx, ty = target_point
         angle = np.arctan2(float(ty) - float(cy), float(tx) - float(cx))
-        splash_zone_poly_points = splash_zone(float(distance), float(angle), float(conf), self.skill, current_point)
-        return self.shapely_poly.contains(ShapelyPolygon(splash_zone_poly_points))
+        splash_zone_poly_points = splash_zone(float(distance), float(angle), float(conf), self.skill, current_point, current_in_sand)
+
+        shapely_splash_zone_poly_points = Polygon(splash_zone_poly_points)
+
+
+        if self.shapely_poly.contains(shapely_splash_zone_poly_points):
+            if not self.in_sand_trap(target_point):
+                total_overlap = sum([shapely_splash_zone_poly_points.intersection(sand_trap).area for sand_trap in self.sand_traps if shapely_splash_zone_poly_points.intersects(self.shapely_poly)])
+                return total_overlap / shapely_splash_zone_poly_points.area <= 1 - conf
+            return True
+        return False
+
 
     def numpy_adjacent_and_dist(self, point: Tuple[float, float], conf: float):
         cloc_distances = cdist(self.np_map_points, np.array([np.array(point)]), 'euclidean')
         cloc_distances = cloc_distances.flatten()
         distance_mask = cloc_distances <= self._max_ddist_ppf(conf)
+        if self.in_sand_trap(point):
+            distance_mask = cloc_distances <= self._max_sand_ddist_ppf(conf)
 
         reachable_points = self.np_map_points[distance_mask]
         goal_distances = self.np_goal_dist[distance_mask]
@@ -254,16 +290,17 @@ class Player:
 
     def in_sand_trap(self, curr_loc):
         curr_pt = ShapelyPoint(curr_loc[0], curr_loc[1])
-        for trap in self.sand_traps:
-            if trap.contains(curr_pt):
-                return True
-        return False
+        if(curr_loc not in self.sand_traps):
+            self.sand_points[curr_loc]= any(trap.contains(curr_pt) for trap in self.sand_traps)
+
+        return self.sand_points[curr_loc]
 
     def next_target(self, curr_loc: Tuple[float, float], goal: Point2D, conf: float) -> Union[
         None, Tuple[float, float]]:
         point_goal = float(goal.x), float(goal.y)
         curr_loc_in_sand_trap = self.in_sand_trap(curr_loc)
         heap = [ScoredPoint(curr_loc, point_goal, 0.0, in_sand_trap=curr_loc_in_sand_trap)]
+
         start_point = heap[0].point
         # Used to cache the best cost and avoid adding useless points to the heap
         best_cost = {tuple(curr_loc): 0.0}
@@ -322,6 +359,8 @@ class Player:
                 # map_points.append(point)
                 x, y = point
                 np_map_points.append(np.array([x, y]))
+
+        np_map_points.insert(0,goal)
         # self.map_points = np.array(map_points)
         self.np_map_points = np.array(np_map_points)
         self.np_goal_dist = cdist(self.np_map_points, np.array([np.array(self.goal)]), 'euclidean')
@@ -372,7 +411,7 @@ class Player:
             v = np.array(target_point) - current_point
             # Unit vector pointing from current to target
             u = v / original_dist
-            if original_dist >= 20.0:
+            if original_dist >= 20.0 or self.in_sand_trap(curr_loc):
                 roll_distance = original_dist / 20
                 max_offset = roll_distance
                 offset = 0
