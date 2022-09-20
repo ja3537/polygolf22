@@ -319,7 +319,7 @@ class Player:
 
             # Add adjacent points to heap
             reachable_points, goal_dists = self.numpy_adjacent_and_dist(
-                next_p, conf, is_in_sand_trap(next_p, self.sand_trap_matlab_polys))
+                next_p, conf, is_in_sand_trap(next_p, self.sand_trap_matlab_polys, cache=self.map_points_in_sand_trap))
 
             for i in range(len(reachable_points)):
                 candidate_point = tuple(reachable_points[i])
