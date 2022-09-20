@@ -16,10 +16,10 @@ from matplotlib.path import Path
 from shapely.geometry import Polygon as ShapelyPolygon, Point
 from scipy.spatial.distance import cdist
 
-STEP = 5.0  # chunk size == 1m
+STEP = 20.0  # chunk size == 1m
 DIST = scipy_stats.norm(0, 1)
-X_STEP = 5.0
-Y_STEP = 5.0
+X_STEP = 20.0
+Y_STEP = 20.0
 
 
 @functools.lru_cache()
@@ -197,8 +197,8 @@ class Player:
         precomp_dir (str): Directory path to store/load precomputation
         """
 
-        self.conf = 0.95  # confidence level, decrease for low skill players
         self.skill = skill
+        self.conf = 0.95 * (200 + self.skill)/300  # confidence level, decrease for low skill players
         self.rng = rng
         self.logger = logger
         self.np_points = None
