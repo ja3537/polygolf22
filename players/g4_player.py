@@ -42,12 +42,12 @@ def spread_points(current_point, angles: np.array, distance, reverse) -> np.arra
     ys = np.sin(angles) * distance + curr_y
     return np.column_stack((xs, ys))
 
-def splash_zone(distance: float, angle: float, conf: float, skill: int, current_point: Tuple[float, float]) -> np.array:
+def splash_zone(distance: float, angle: float, conf: float, skill: int, current_point: Tuple[float, float], target_trapped=False) -> np.array:
     conf_points = np.linspace(1 - conf, conf, 5)
     distances = np.vectorize(standard_ppf)(conf_points) * (distance / skill) + distance
     angles = np.vectorize(standard_ppf)(conf_points) * (1/(2*skill)) + angle
     scale = 1.1
-    if distance <= 20:
+    if target_trapped or distance <= 20:
         scale = 1.0
     max_distance = distances[-1]*scale
     top_arc = spread_points(current_point, angles, max_distance, False)
@@ -240,7 +240,7 @@ class Player:
 
         return np.linalg.norm(current_point - target_point) <= self._max_ddist_ppf(conf)
     
-    def splash_zone_within_polygon(self, current_point: Tuple[float, float], target_point: Tuple[float, float], conf: float) -> bool:
+    def splash_zone_within_polygon(self, current_point: Tuple[float, float], target_point: Tuple[float, float], conf: float, target_trapped=False) -> bool:
         if type(current_point) == Point2D:
             current_point = tuple(Point2D)
 
@@ -251,7 +251,7 @@ class Player:
         cx, cy = current_point
         tx, ty = target_point
         angle = np.arctan2(float(ty) - float(cy), float(tx) - float(cx))
-        splash_zone_poly_points = splash_zone(float(distance), float(angle), float(conf), self.skill, current_point)
+        splash_zone_poly_points = splash_zone(float(distance), float(angle), float(conf), self.skill, current_point, target_trapped=target_trapped)
         return self.shapely_poly.contains(ShapelyPolygon(splash_zone_poly_points))
 
     def numpy_adjacent_and_dist(self, point: Tuple[float, float], conf: float, mode='max', trapped=False):
@@ -316,10 +316,12 @@ class Player:
                 continue
             if next_sp.actual_cost > 10:
                 continue
-            if next_sp.actual_cost > 0 and not self.splash_zone_within_polygon(next_sp.previous.point, next_p, conf):
-                if next_p in best_cost:
-                    del best_cost[next_p]
-                continue
+            if next_sp.actual_cost > 0:
+                target_trapped = any([trap.contains_point(next_p) for trap in self.mpl_sand_polys])
+                if not self.splash_zone_within_polygon(next_sp.previous.point, next_p, conf, target_trapped=target_trapped):
+                    if next_p in best_cost:
+                        del best_cost[next_p]
+                    continue
             visited.add(next_p)
 
             if np.linalg.norm(np.array(self.goal) - np.array(next_p)) <= 5.4 / 100.0:
