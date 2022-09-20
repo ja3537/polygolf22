@@ -144,7 +144,7 @@ def find_map_points_in_sand_trap(map_points: List[Tuple[float, float]], sand_tra
 class ScoredPoint:
     """Scored point class for use in A* search algorithm"""
 
-    def __init__(self, point: Tuple[float, float], goal: Tuple[float, float], actual_cost=float('inf'), previous=None, goal_dist=None, skill=50):
+    def __init__(self, point: Tuple[float, float], goal: Tuple[float, float], actual_cost=float('inf'), previous=None, goal_dist=None, skill=50, sand_penalty=0):
         self.point = point
         self.goal = goal
 
@@ -160,7 +160,7 @@ class ScoredPoint:
         max_dist = standard_ppf(
             0.99) * (max_target_dist / skill) + max_target_dist
         max_dist *= 1.10
-        self._h_cost = goal_dist / max_dist
+        self._h_cost = goal_dist / max_dist + sand_penalty
 
         self._f_cost = self.actual_cost + self.h_cost
 
@@ -318,15 +318,6 @@ class Player:
             if next_sp.actual_cost > 10:
                 continue
 
-            if next_sp.actual_cost > 0:
-                splash_zone = self.splash_zone(next_sp.previous.point, next_p, conf)
-                if not self.splash_zone_within_polygon(splash_zone):
-                    if next_p in best_cost:
-                        del best_cost[next_p]
-                    continue
-                if self.splash_zone_within_sand(splash_zone):
-                    actual_cost += self.AVOID_SAND_PENALTY
-
             visited.add(next_p)
 
             if np.linalg.norm(np.array(self.goal) - np.array(next_p)) <= 5.4 / 100.0:
@@ -343,13 +334,20 @@ class Player:
 
             for i in range(len(reachable_points)):
                 candidate_point = tuple(reachable_points[i])
-                goal_dist = goal_dists[i]
-                new_point = ScoredPoint(candidate_point, point_goal, actual_cost + 1, next_sp,
-                                        goal_dist=goal_dist, skill=self.skill)
                 if candidate_point not in best_cost or best_cost[candidate_point] > new_point.actual_cost:
                     points_checked += 1
-                    # if not self.splash_zone_within_polygon(new_point.previous.point, new_point.point, conf):
-                    #     continue
+
+                    sand_penalty = 0
+                    splash_zone = self.splash_zone(next_p, candidate_point, conf)
+                    if not self.splash_zone_within_polygon(splash_zone):
+                        continue
+                    if self.splash_zone_within_sand(splash_zone):
+                        sand_penalty = self.AVOID_SAND_PENALTY
+
+                    goal_dist = goal_dists[i]
+                    new_point = ScoredPoint(candidate_point, point_goal, actual_cost + 1, next_sp,
+                                            goal_dist=goal_dist, skill=self.skill, sand_penalty=sand_penalty)
+
                     best_cost[new_point.point] = new_point.actual_cost
                     heapq.heappush(heap, new_point)
 
