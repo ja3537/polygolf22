@@ -367,8 +367,14 @@ class Player:
         pp = list(poly_to_points(golf_map))
 
         np_map_points = [np.array([x, y]) for x, y in pp if self.mpl_poly.contains_point((x, y))]
-        np_map_points.insert(0, goal)
 
+        xmin, ymin, xmax, ymax = golf_map.bounds
+        add_start = perf_counter()
+        while (len(np_map_points) < 4000) and perf_counter() - add_start < 30:
+            x, y = np.random.uniform(xmin, xmax, 5000), np.random.uniform(ymin, ymax, 5000)
+            np_map_points += [np.array(point) for point in np.array([x, y], dtype=int).T if self.mpl_poly.contains_point(point)]
+        
+        np_map_points.insert(0, goal)
         # self.map_points = np.array(map_points)
         self.np_map_points = np.array(np_map_points)
         self.np_goal_dist = cdist(self.np_map_points, np.array([np.array(self.goal)]), 'euclidean')
