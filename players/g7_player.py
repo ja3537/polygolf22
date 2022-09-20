@@ -23,6 +23,7 @@ DIST = scipy_stats.norm(0, 1)
 def standard_ppf(conf: float) -> float:
     return DIST.ppf(conf)
 
+
 def polygon_to_points(golf_map: sympy.Polygon) -> Iterator[Tuple[float, float]]:
     """
     This function takes in the polygon golf map and returns an iterator for the
@@ -48,6 +49,7 @@ def polygon_to_points(golf_map: sympy.Polygon) -> Iterator[Tuple[float, float]]:
         y_current = y_min
         x_current += x_step
 
+
 def sympy_polygon_to_shapely(polygon: sympy.Polygon) -> ShapelyPolygon:
     """
     Helper function that converts a sympy polygon to a shapely polygon
@@ -55,6 +57,7 @@ def sympy_polygon_to_shapely(polygon: sympy.Polygon) -> ShapelyPolygon:
     vertices = polygon.vertices
     vertices.append(vertices[0])
     return ShapelyPolygon(vertices)
+
 
 def sympy_tri_to_shapely(sympy_tri: Triangle) -> ShapelyPolygon:
     """Helper function to convert sympy Polygon to shapely Polygon object"""
@@ -65,12 +68,14 @@ def sympy_tri_to_shapely(sympy_tri: Triangle) -> ShapelyPolygon:
     l.append(Point2D(v[0][0],v[0][1]))
     return ShapelyPolygon(l)
 
+
 def sympy_polygon_to_mpl(sympy_poly: Polygon) -> Path:
     """Helper function to convert sympy Polygon to matplotlib Path object"""
     v = sympy_poly.vertices
     v = list(v)
     v.append(v[0])
     return Path(v, closed=True)
+
 
 def sympy_tri_to_mpl(sympy_tri: Triangle) -> Path:
     """Helper function to convert sympy Polygon to matplotlib Path object"""
@@ -81,6 +86,7 @@ def sympy_tri_to_mpl(sympy_tri: Triangle) -> Path:
     l.append(Point2D(v[0][0],v[0][1]))
     return Path(l, closed=True)
 
+
 def spread_points(current_point, angles: np.array, distance, reverse) -> np.array:
     curr_x, curr_y = current_point
     if reverse:
@@ -88,6 +94,7 @@ def spread_points(current_point, angles: np.array, distance, reverse) -> np.arra
     xs = np.cos(angles) * distance + curr_x
     ys = np.sin(angles) * distance + curr_y
     return np.column_stack((xs, ys))
+
 
 def splash_zone(distance: float, angle: float, conf: float, skill: int, current_point: Tuple[float, float]) -> np.array:
     conf_points = np.linspace(1 - conf, conf, 5)
@@ -202,7 +209,7 @@ class Player:
         self.poly_shapely = []
         self.prev_rv = None
 
-        max_distance = 200 + self.skill # -0.001 is what Group 9 did at the end
+        max_distance = 200 + self.skill  # -0.001 is what Group 9 did at the end
         self.max_ddist = scipy_stats.norm(max_distance, max_distance / self.skill)
         self.max_ddist_sand = scipy_stats.norm(max_distance / 2, 2 * max_distance / self.skill)
 
@@ -229,8 +236,6 @@ class Player:
     #         self.precompute()
     #         pickle.dump(self.dmap, open(precomp_path, "wb"))
         # End #################################################################
-
-
 
     @functools.lru_cache()
     def _max_ddist_ppf(self, conf: float):
@@ -317,7 +322,7 @@ class Player:
             #     self.mpl_poly_trap = sympy_tri_to_mpl(trap)
             #     if self.mpl_poly_trap.contains_point(point):
             #         no = False
-            if self.mpl_poly.contains_point(point): # and no:
+            if self.mpl_poly.contains_point(point):  # and no:
                 # map_points.append(point)
                 x, y = point
                 np_points.append(np.array([x, y]))
