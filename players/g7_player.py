@@ -30,20 +30,18 @@ def polygon_to_points(golf_map: sympy.Polygon) -> Iterator[Tuple[float, float]]:
     points on a lattice with distance STEP. We ignore the edges of the map
     where there is only water.
     """
-    x_min, y_min = float('inf'), float('inf')
-    x_max, y_max = float('-inf'), float('-inf')
+    x_min, y_min, x_max, y_max = float('inf'), float('inf'), float('-inf'), float('-inf')
     for point in golf_map.vertices:
-        x = float(point.x)
-        y = float(point.y)
+        x, y = float(point.x), float(point.y)
         x_min = min(x, x_min)
         x_max = max(x, x_max)
         y_min = min(y, y_min)
         y_max = max(y, y_max)
+        
     x_step = STEP
     y_step = STEP
 
-    x_current = x_min
-    y_current = y_min
+    x_current, y_current = x_min, y_min
     while x_current < x_max:
         while y_current < y_max:
             yield float(x_current), float(y_current)
@@ -96,9 +94,8 @@ def splash_zone(distance: float, angle: float, conf: float, skill: int, current_
     conf_points = np.linspace(1 - conf, conf, 5)
     distances = np.vectorize(standard_ppf)(conf_points) * (distance / skill) + distance
     angles = np.vectorize(standard_ppf)(conf_points) * (1/(2*skill)) + angle
-    scale = 1.1
-    if distance <= 20:
-        scale = 1.0
+    scale = 1.1 if distance <= 20 else 1.0
+    
     max_distance = distances[-1]*scale
     top_arc = spread_points(current_point, angles, max_distance, False)
 
