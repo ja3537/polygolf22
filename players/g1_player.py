@@ -13,6 +13,8 @@ from matplotlib.path import Path
 from shapely.geometry import Polygon as ShapelyPolygon, Point as ShapelyPoint
 from scipy.spatial.distance import cdist
 
+import constants
+
 
 # Cached distribution
 DIST = scipy_stats.norm(0, 1)
@@ -140,11 +142,29 @@ def find_map_points_in_sand_trap(map_points: List[Tuple[float, float]], sand_tra
 
     return points_in_sand_trap
 
+def roll(current_point: Tuple[float, float], target_point: Tuple[float, float], rolling_factor: float) -> Tuple[float, float]:
+    """Returns the final point along the line formed by @current_point, @target_point,
+    but (1.0 + @rolling_factor) times the distance between @current_point and @target_point
+    away from the @current_point.
+    """
+    cx, cy = current_point
+    tx, ty = target_point
+    curr_loc = Point2D(current_point)
+
+    angle = np.arctan2(ty - cy, tx - cx)
+    distance = curr_loc.distance(Point2D(target_point, evaluate=False))
+
+    final_x, final_y = sympy.Point2D(
+        curr_loc.x + (1. + rolling_factor) * distance * sympy.cos(angle),
+        curr_loc.y + (1. + rolling_factor) * distance * sympy.sin(angle))
+    
+
+    return (float(final_x), float(final_y))
 
 class ScoredPoint:
     """Scored point class for use in A* search algorithm"""
 
-    def __init__(self, point: Tuple[float, float], goal: Tuple[float, float], actual_cost=float('inf'), previous=None, goal_dist=None, skill=50):
+    def __init__(self, point: Tuple[float, float], goal: Tuple[float, float], actual_cost=float('inf'), previous=None, goal_dist=None, skill=50, sand_penalty=0):
         self.point = point
         self.goal = goal
 
@@ -160,7 +180,7 @@ class ScoredPoint:
         max_dist = standard_ppf(
             0.99) * (max_target_dist / skill) + max_target_dist
         max_dist *= 1.10
-        self._h_cost = goal_dist / max_dist
+        self._h_cost = goal_dist / max_dist + sand_penalty
 
         self._f_cost = self.actual_cost + self.h_cost
 
@@ -190,6 +210,8 @@ class ScoredPoint:
 
 
 class Player:
+    AVOID_SAND_PENALTY = 0.1
+
     def __init__(self, skill: int, rng: np.random.Generator, logger: logging.Logger, golf_map: sympy.Polygon, start: sympy.geometry.Point2D, target: sympy.geometry.Point2D, sand_traps: List[sympy.Polygon], map_path: str, precomp_dir: str) -> None:
         """Initialise the player with given skill.
 
@@ -226,6 +248,7 @@ class Player:
         self.np_map_points = None
         self.map_points_in_sand_trap = None  # :: Set[Tuple[float, float]]
         self.sand_trap_matlab_polys = None   # :: List[Path]
+        self.sand_trap_shapely_polys = None
         self.mpl_paly = None
         self.shapely_poly = None
         self.goal = None
@@ -234,6 +257,9 @@ class Player:
         # Cached data
         max_dist = 200 + self.skill
         self.max_ddist = scipy_stats.norm(max_dist, max_dist / self.skill)
+
+        max_sandtrap_dist = max_dist/2
+        self.max_sandtrap_ddist = scipy_stats.norm(max_sandtrap_dist, max_dist / self.skill)
 
         # Conf level
         self.conf = 0.95
@@ -248,19 +274,10 @@ class Player:
     def _max_ddist_ppf(self, conf: float):
         return self.max_ddist.ppf(1.0 - conf)
 
-    def reachable_point(self, current_point: Tuple[float, float], target_point: Tuple[float, float], conf: float) -> bool:
-        """Determine whether the point is reachable with confidence [conf] based on our player's skill"""
-        if type(current_point) == Point2D:
-            current_point = tuple(current_point)
-        if type(target_point) == Point2D:
-            target_point = tuple(target_point)
+    def _max_sandtrap_ddist_ppf(self, conf:float):
+        return self.max_sandtrap_ddist.ppf(1.0-conf)
 
-        current_point = np.array(current_point).astype(float)
-        target_point = np.array(target_point).astype(float)
-
-        return np.linalg.norm(current_point - target_point) <= self._max_ddist_ppf(conf)
-
-    def splash_zone_within_polygon(self, current_point: Tuple[float, float], target_point: Tuple[float, float], conf: float) -> bool:
+    def splash_zone(self, current_point: Tuple[float, float], target_point: Tuple[float, float], conf: float) -> np.array:
         if type(current_point) == Point2D:
             current_point = tuple(Point2D)
 
@@ -272,18 +289,34 @@ class Player:
         cx, cy = current_point
         tx, ty = target_point
         angle = np.arctan2(float(ty) - float(cy), float(tx) - float(cx))
-        splash_zone_poly_points = splash_zone(float(distance), float(
-            angle), float(conf), self.skill, current_point, current_point in self.map_points_in_sand_trap)
+        in_sandtrap = is_in_sand_trap(
+            current_point, self.sand_trap_matlab_polys, cache=self.map_points_in_sand_trap)
+        return splash_zone(float(distance), float(
+            angle), float(conf), self.skill, current_point, in_sandtrap)
+    
+    def splash_zone_within_polygon(self, splash_zone_poly_points: np.array) -> bool:
         return self.shapely_poly.contains(ShapelyPolygon(splash_zone_poly_points))
 
-    def numpy_adjacent_and_dist(self, point: Tuple[float, float], conf: float):
+    def splash_zone_within_sand(self, splash_zone_poly_points: np.array) -> bool:
+        for sand_trap in self.sand_trap_shapely_polys:
+            if sand_trap.intersects(ShapelyPolygon(splash_zone_poly_points)):
+                return True
+        return False
+
+    def numpy_adjacent_and_dist(self, point: Tuple[float, float], conf: float, in_sandtrap: bool):
         cloc_distances = cdist(self.np_map_points, np.array(
             [np.array(point)]), 'euclidean')
         cloc_distances = cloc_distances.flatten()
-        distance_mask = cloc_distances <= self._max_ddist_ppf(conf)
 
-        reachable_points = self.np_map_points[distance_mask]
-        goal_distances = self.np_goal_dist[distance_mask]
+        if in_sandtrap:
+            distance_mask = cloc_distances <= self._max_sandtrap_ddist_ppf(conf)
+            reachable_points = self.np_map_points[distance_mask]
+            goal_distances = self.np_goal_dist[distance_mask]
+
+        else:
+            distance_mask = cloc_distances <= self._max_ddist_ppf(conf)
+            reachable_points = self.np_map_points[distance_mask]
+            goal_distances = self.np_goal_dist[distance_mask]
 
         return reachable_points, goal_distances
 
@@ -298,15 +331,13 @@ class Player:
         while len(heap) > 0:
             next_sp = heapq.heappop(heap)
             next_p = next_sp.point
+            actual_cost = next_sp.actual_cost
 
             if next_p in visited:
                 continue
             if next_sp.actual_cost > 10:
                 continue
-            if next_sp.actual_cost > 0 and not self.splash_zone_within_polygon(next_sp.previous.point, next_p, conf):
-                if next_p in best_cost:
-                    del best_cost[next_p]
-                continue
+
             visited.add(next_p)
 
             if np.linalg.norm(np.array(self.goal) - np.array(next_p)) <= 5.4 / 100.0:
@@ -318,17 +349,26 @@ class Player:
                 return next_sp.point
 
             # Add adjacent points to heap
+            next_p_after_rolling = next_p if next_sp.previous is None else roll(next_sp.previous.point, next_p, constants.extra_roll)
             reachable_points, goal_dists = self.numpy_adjacent_and_dist(
-                next_p, conf)
+                next_p_after_rolling, conf, is_in_sand_trap(next_p_after_rolling, self.sand_trap_matlab_polys, cache=self.map_points_in_sand_trap))
+
             for i in range(len(reachable_points)):
                 candidate_point = tuple(reachable_points[i])
-                goal_dist = goal_dists[i]
-                new_point = ScoredPoint(candidate_point, point_goal, next_sp.actual_cost + 1, next_sp,
-                                        goal_dist=goal_dist, skill=self.skill)
                 if candidate_point not in best_cost or best_cost[candidate_point] > new_point.actual_cost:
                     points_checked += 1
-                    # if not self.splash_zone_within_polygon(new_point.previous.point, new_point.point, conf):
-                    #     continue
+
+                    sand_penalty = 0
+                    splash_zone = self.splash_zone(next_p, candidate_point, conf)
+                    if not self.splash_zone_within_polygon(splash_zone):
+                        continue
+                    if self.splash_zone_within_sand(splash_zone):
+                        sand_penalty = self.AVOID_SAND_PENALTY
+
+                    goal_dist = goal_dists[i]
+                    new_point = ScoredPoint(candidate_point, point_goal, actual_cost + 1, next_sp,
+                                            goal_dist=goal_dist, skill=self.skill, sand_penalty=sand_penalty)
+
                     best_cost[new_point.point] = new_point.actual_cost
                     heapq.heappush(heap, new_point)
 
@@ -340,6 +380,8 @@ class Player:
         self.mpl_poly = sympy_poly_to_mpl(golf_map)
         self.shapely_poly = sympy_poly_to_shapely(golf_map)
         self.sand_trap_matlab_polys = [sympy_poly_to_mpl(
+            sand_trap) for sand_trap in sand_traps]
+        self.sand_trap_shapely_polys = [sympy_poly_to_shapely(
             sand_trap) for sand_trap in sand_traps]
 
         pp = list(poly_to_points(golf_map))
@@ -405,7 +447,8 @@ class Player:
                 max_offset = roll_distance
                 offset = 0
                 prev_target = target_point
-                while offset < max_offset and self.splash_zone_within_polygon(tuple(current_point), target_point, confidence):
+                splash_zone = self.splash_zone(tuple(current_point), target_point, confidence)
+                while offset < max_offset and self.splash_zone_within_polygon(splash_zone):
                     offset += 1
                     dist = original_dist - offset
                     prev_target = target_point
@@ -442,9 +485,9 @@ def test_splash_zone_within_polygon():
 
     player = Player(50, 0xdeadbeef, None)
     assert player.splash_zone_within_polygon(
-        current_point, inside_target_point, poly, 0.8)
+        player.splash_zone(current_point, inside_target_point, poly, 0.8))
     assert not player.splash_zone_within_polygon(
-        current_point, outside_target_point, poly, 0.8)
+        player.splash_zone(current_point, outside_target_point, poly, 0.8))
 
 
 def test_poly_to_points():
@@ -529,3 +572,24 @@ def test_find_map_points_in_sand_trap():
         points_in_sand_trap = find_map_points_in_sand_trap(
             tc["map_points"], sand_trap_paths)
         assert points_in_sand_trap == tc["expect"]
+
+def test_roll():
+    cases = [
+        {
+            "current_point": (0.0, 0.0),
+            "target_point": (10.0, 0.0),
+            "rolling_factor": 0.1,
+            "expect": (11.0, 0.0)
+        },
+        {
+            "current_point": (0.0, 0.0),
+            "target_point": (3.0, 3.0),
+            "rolling_factor": 0.5,
+            "expect": (4.5, 4.5)
+        }
+    ]
+
+    for tc in cases:
+        ans = roll(tc["current_point"], tc["target_point"], tc["rolling_factor"])
+        assert ans == tc["expect"]
+        assert type(ans[0]) == float and type(ans[1]) == float
