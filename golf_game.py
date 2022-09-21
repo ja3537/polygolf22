@@ -576,4 +576,3 @@ class GolfGame:
         step_play_dict["roll_in_sand"] = roll_in_sand
         return step_play_dict
 
-
