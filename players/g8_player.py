@@ -200,7 +200,7 @@ class Player:
         self.rng = rng
         self.logger = logger
         self.np_map_points = None
-        self.mpl_paly = None
+        self.mpl_poly = None
         self.shapely_poly = None
         self.goal = None
         self.prev_rv = None
@@ -209,7 +209,8 @@ class Player:
         max_dist = 200 + self.skill
         self.max_ddist = scipy_stats.norm(max_dist, max_dist / self.skill)
 
-
+        self.np_sand_trap_points = None
+        self.mpl_sand_polys = None
         self.max_sand_ddist = scipy_stats.norm(max_dist / 2, (max_dist / self.skill)*2)
 
         # Conf level
@@ -227,6 +228,7 @@ class Player:
 
     def reachable_point(self, current_point: Tuple[float, float], target_point: Tuple[float, float], conf: float) -> bool:
         """Determine whether the point is reachable with confidence [conf] based on our player's skill"""
+
         if type(current_point) == Point2D:
             current_point = tuple(current_point)
         if type(target_point) == Point2D:
@@ -235,11 +237,11 @@ class Player:
         current_point = np.array(current_point).astype(float)
         target_point = np.array(target_point).astype(float)
 
-        # if in sand trap:
-        #   return np.linalg.norm(current_point - target_point) <= self._max_sand_ddist_ppf(conf)
+        if self.point_in_sandtrap_mpl(current_point):
+            return np.linalg.norm(current_point - target_point) <= self._max_sand_ddist_ppf(conf)
+        else:
+            return np.linalg.norm(current_point - target_point) <= self._max_ddist_ppf(conf)
 
-        return np.linalg.norm(current_point - target_point) <= self._max_ddist_ppf(conf)
-    
     def splash_zone_within_polygon(self, current_point: Tuple[float, float], target_point: Tuple[float, float], conf: float) -> bool:
         if type(current_point) == Point2D:
             current_point = tuple(Point2D)
@@ -264,19 +266,25 @@ class Player:
     def numpy_adjacent_and_dist (self, point: Tuple[float, float], conf: float):
         cloc_distances = cdist(self.np_map_points, np.array([np.array(point)]), 'euclidean')
         cloc_distances = cloc_distances.flatten()
-        distance_mask = cloc_distances <= self._max_ddist_ppf(conf)
 
+        distance_mask = cloc_distances <= self._max_ddist_ppf(conf)
         sand_trap_distance_mask = cloc_distances <= self._max_sand_ddist_ppf(conf)
 
         reachable_points = None
-        if point in np.array(self.np_sand_trap_points):
+        if self.point_in_sandtrap_mpl(point):
             reachable_points = self.np_map_points[sand_trap_distance_mask]
         else:
             reachable_points = self.np_map_points[distance_mask]
         
         goal_distances = self.np_goal_dist[distance_mask]
-
         return reachable_points, goal_distances
+    
+    def point_in_sandtrap_mpl(self, current_point: Tuple[float, float]) -> bool:
+        for sandtrap in self.mpl_sand_polys:
+            if sandtrap.contains_point(current_point):
+                return True
+        
+        return False
 
     def next_target(self, curr_loc: Tuple[float, float], goal: Point2D, conf: float) -> Union[None, Tuple[float, float]]:
         point_goal = float(goal.x), float(goal.y)
