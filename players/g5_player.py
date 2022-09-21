@@ -10,9 +10,10 @@ from scipy import stats as scipy_stats
 from typing import Tuple, Iterator, List, Union
 from sympy.geometry import Polygon, Point2D
 from matplotlib.path import Path
-from shapely.geometry import Polygon as ShapelyPolygon, Point as ShapelyPoint, LineString
+from shapely.geometry import Polygon as ShapelyPolygon, Point as ShapelyPoint, LineString as ShapelyLineString
 from scipy.spatial.distance import cdist
 
+import matplotlib.pyplot as plt
 
 # Cached distribution
 DIST = scipy_stats.norm(0, 1)
@@ -42,7 +43,7 @@ def spread_points(current_point, angles: np.array, distance, reverse) -> np.arra
     return np.column_stack((xs, ys))
 
 
-def splash_zone(distance: float, angle: float, conf: float, skill: int, current_point: Tuple[float, float]) -> np.array:
+def splash_zone(distance: float, angle: float, conf: float, skill: int, current_point: Tuple[float, float], sand_traps: List[Path]) -> np.array:
     """Gives a polygon representing the total extent of possible landing points from taking this shot"""
     conf_points = np.linspace(1 - conf, conf, 5)
     distances = np.vectorize(standard_ppf)(conf_points) * (distance / skill) + distance
@@ -51,15 +52,42 @@ def splash_zone(distance: float, angle: float, conf: float, skill: int, current_
     if distance <= 20:
         scale = 1.0
     max_distance = distances[-1]*scale
-    top_arc = spread_points(current_point, angles, max_distance, False)
+
+    outer_points = spread_points(current_point, angles, max_distance, False)
+
+    top_shape = []
+    no_roll_ranges = set()
+    max_landing_distance = distances[-1]
+    max_landing_points = [(float(x), float(y)) for x,y in spread_points(current_point, angles, max_landing_distance, False)]
+    max_landing_arc = ShapelyLineString(max_landing_points)
+    for trap in sand_traps:
+        inter = ShapelyPolygon(trap.vertices).intersection(max_landing_arc)
+        for point in inter.coords:
+            plt.plot(*point, 'go')
+        no_roll_ranges.update(inter.coords)
+    out = False
+    for i, outer_point in enumerate(outer_points):
+        inner_point = max_landing_points[i]
+        if inner_point in no_roll_ranges:
+            if out:
+                top_shape.append(outer_point)
+                out = False
+            top_shape.append(inner_point)
+        else:
+            if not out:
+                if i > 1:
+                    top_shape.append(outer_points[i - 1])
+                out = True
+            top_shape.append(outer_point)
+
 
     if distance > 20:
         min_distance = distances[0]
         bottom_arc = spread_points(current_point, angles, min_distance, True)
-        return np.concatenate((top_arc, bottom_arc, np.array([top_arc[0]])))
+        return np.concatenate((top_shape, bottom_arc, np.array([top_shape[0]])))
 
     current_point = np.array([current_point])
-    return np.concatenate((current_point, top_arc, current_point))
+    return np.concatenate((current_point, top_shape, current_point))
 
 
 def poly_to_points(poly: Polygon) -> Iterator[Tuple[float, float]]:
@@ -231,7 +259,7 @@ class Player:
         cx, cy = current_point
         tx, ty = target_point
         angle = np.arctan2(float(ty) - float(cy), float(tx) - float(cx))
-        splash_zone_poly_points = splash_zone(float(distance), float(angle), float(conf), self.skill, current_point)
+        splash_zone_poly_points = splash_zone(float(distance), float(angle), float(conf), self.skill, current_point, self.sand_traps_mpl_poly)
         return self.shapely_poly.contains(ShapelyPolygon(splash_zone_poly_points))
 
     def numpy_adjacent_and_dist(self, point: Tuple[float, float], conf: float):
@@ -426,3 +454,29 @@ def test_poly_to_points():
         for y in range(1, 10):
             assert (x,y) in points
     assert len(points) == 81
+
+if __name__ == "__main__":
+    start = [0, 0]
+    distance = 100
+    angle = 0
+    target = [distance * np.cos(angle), distance * np.sin(angle)]
+    sand_traps = [Path([[100, 5], [120, 5], [120, 0], [100, 0]])]
+    for trap in sand_traps:
+        plt.fill(
+            *list(zip(*trap.vertices)),
+            facecolor="#ffffcc",
+            edgecolor="black",
+            linewidth=1,
+        )
+
+    plt.plot(*start, 'bo')
+    plt.plot(*target, 'go')
+
+    splash = splash_zone(distance, angle, 0.95, 10, start, sand_traps)
+
+    plt.fill(
+        *list(zip(*splash)), facecolor="#cccccc", edgecolor="black", linewidth=1, alpha=0.5
+    )
+    for point in splash:
+        plt.plot(*point, 'ro')
+    plt.savefig("render.png")
