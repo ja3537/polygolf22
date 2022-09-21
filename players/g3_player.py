@@ -461,10 +461,11 @@ class Player:
         # self.mpl_poly = sympy_poly_to_mpl(golf_map)
         # self.shapely_poly = sympy_poly_to_shapely(golf_map)
         self.shapely_poly = golf_map
-        pp = list(poly_to_points(golf_map))
+        #pp = list(poly_to_points(golf_map))
+        pp = self.centroids
         for point in pp:
             # Use matplotlib here because it's faster than shapely for this calculation...
-            if self.shapely_poly.contains(ShapelyPoint(point)):
+            #if self.shapely_poly.contains(ShapelyPoint(point)):
                 # map_points.append(point)
                 x, y = point
                 np_map_points.append(np.array([x, y]))
