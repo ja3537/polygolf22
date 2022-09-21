@@ -200,7 +200,7 @@ class Player:
         """
 
         self.skill = skill
-        self.conf = 0.95 * (200 + self.skill)/300  # confidence level, decrease for low skill players
+        self.conf = 0.95
         self.rng = rng
         self.logger = logger
         self.np_points = None
