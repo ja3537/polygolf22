@@ -19,8 +19,8 @@ from scipy.spatial.distance import cdist
 # Cached distribution
 DIST = scipy_stats.norm(0, 1)
 SAND_DIST = scipy_stats.norm(0, 2)
-X_STEP = 5
-Y_STEP = 5
+X_STEP = 10
+Y_STEP = 10
 
 
 @functools.lru_cache()
@@ -286,7 +286,7 @@ class Player:
         return reachable_points, goal_distances
 
     def next_target(self, curr_loc: Tuple[float, float], goal: Point2D, conf: float) -> Union[None, Tuple[float, float]]:
-        last_checked_time = perf_counter()
+        # last_checked_time = perf_counter()
         point_goal = float(goal.x), float(goal.y)
         heap = [ScoredPoint(curr_loc, point_goal, 0.0, in_sand=self.is_in_sand(curr_loc))]
         start_point = heap[0].point
@@ -295,11 +295,10 @@ class Player:
         visited = set()
         points_checked = 0
         while len(heap) > 0:
-            if perf_counter() - last_checked_time >= 100: #maybe do based on len(heap)
-                # print(f"Checked {points_checked} points in {perf_counter() - last_checked_time} seconds")
-                last_checked_time = perf_counter()
-                conf -= 0.1
-
+            # if perf_counter() - last_checked_time >= 100: #maybe do based on len(heap)
+            #     # print(f"Checked {points_checked} points in {perf_counter() - last_checked_time} seconds")
+            #     last_checked_time = perf_counter()
+            #     conf -= 0.1
             next_sp = heapq.heappop(heap)
             next_p = next_sp.point
 
@@ -404,34 +403,61 @@ class Player:
         self.current_shot_in_sand = self.is_in_sand(curr_loc)
         # print(f"Current shot in sand: {self.current_shot_in_sand}")
 
+
+        # #if all other searches take this long, we can only afford to check once per turn
+        # a = [.99, .95, .75, .6]
+        # while(target_path_length is None or ((turn_end - self.turn_start)*(target_path_length + score)) <= 600):
+        #     #TODO: what should confidence be
+        #     confidence = max(confidence - 0.1, 0.6)
+        #     target_point2 = None
+        #     while target_point2 is None:
+        #         if confidence <= 0.5:
+        #             break
+
+        #         # print(f"turn # {score} searching with {confidence} confidence")
+        #         target_point2, target_path_length2 = self.next_target(cl, target, confidence)
+        #         confidence -= 0.05
+        #     else: #if no break
+        #         confidence += 0.05
+        #         if target_path_length is None or target_path_length2 + 1 <=  target_path_length:
+        #             # print("playing shot 2")
+        #             target_point = target_point2
+        #             target_path_length = target_path_length2
+        #     turn_end = perf_counter()
+
+        #     if confidence <= 0.6:
+        #         break
+
+        #if all other searches take this long, we can only afford to check once per turn
+        confidence_intervals = [.95, .99, .75, .6, .85]
+        
+        target_points = {}
         target_point = None
         confidence = self.conf + 0.1
         cl = float(curr_loc.x), float(curr_loc.y)
         turn_end = perf_counter()
         target_path_length = None
 
-        #if all other searches take this long, we can only afford to check once per turn
-        while(target_path_length is None or ((turn_end - self.turn_start)*(target_path_length + score)) <= 600):
-            #TODO: what should confidence be
-            confidence = max(confidence - 0.1, 0.6)
-            target_point2 = None
-            while target_point2 is None:
-                if confidence <= 0.5:
-                    break
+        for confidence in confidence_intervals:
+            # print(f"turn # {score} searching with {confidence} confidence")
+            target_point, target_path_length = self.next_target(cl, target, confidence)
+            if target_point is None:
+                continue
+            target_points[confidence] = {
+                "target_point": target_point,
+                "target_path_length": target_path_length,
+                "confidence": confidence
+            }
 
-                # print(f"turn # {score} searching with {confidence} confidence")
-                target_point2, target_path_length2 = self.next_target(cl, target, confidence)
-                confidence -= 0.05
-            else: #if no break
-                confidence += 0.05
-                if target_path_length is None or target_path_length2 + 1 <=  target_path_length:
-                    # print("playing shot 2")
-                    target_point = target_point2
-                    target_path_length = target_path_length2
-            turn_end = perf_counter()
-
-            if confidence <= 0.6:
+            if ((perf_counter() - self.turn_start)*(target_path_length + score)) > 600:
                 break
+        
+        if len(target_points) == 0:
+            return None
+        smallest_path = min(target_points.values(), key=lambda x: x["target_path_length"])
+        max_confidence_of_smallest_path = max(x["confidence"] for x in target_points.values() if x["target_path_length"] == smallest_path)
+        target_point = target_points[max_confidence_of_smallest_path]["target_point"]
+
 
         # fixup target
         current_point = np.array(tuple(curr_loc)).astype(float)
@@ -441,20 +467,35 @@ class Player:
             # Unit vector pointing from current to target
             u = v / original_dist
 
-            line = ShapelyLineString([self.goal, current_point])
-            if not any(line.intersects(sandtrap) for sandtrap in self.sand_traps):
+
                 # If the line from the goal to the current point intersects a sand trap, we don't adjust
-                if original_dist >= 20.0 or self.current_shot_in_sand:
-                    roll_distance = original_dist /  20
-                    max_offset = roll_distance
-                    offset = 0
+            if original_dist >= 20.0 or self.current_shot_in_sand:
+                roll_distance = original_dist /  20
+                max_offset = roll_distance
+                offset = 0
+                prev_target = target_point
+                while offset < max_offset and self.splash_zone_within_polygon(tuple(current_point), target_point, confidence):
+                    offset += 1
+                    dist = original_dist - offset
                     prev_target = target_point
-                    while offset < max_offset and self.splash_zone_within_polygon(tuple(current_point), target_point, confidence):
-                        offset += 1
-                        dist = original_dist - offset
-                        prev_target = target_point
-                        target_point = current_point + u * dist
-                    target_point = prev_target
+                    target_point = current_point + u * dist
+                target_point = prev_target
+
+                line = ShapelyLineString([self.goal, target_point])
+                if any(line.intersects(s) for s in self.sand_traps):
+                # intersections = [line.intersections() for sandtrap in self.sand_traps if line.intersects(sandtrap)]
+                # if len(intersections) != 0:
+                    target_point = self.goal
+                    # sand trap in path of the roll
+                    # closest_point = min([intersection.distance(self.shapely_goal) for intersection in intersections])
+                    
+                    # target_point = min(some threshold, target_point distance to goal/2?)
+
+        #sand trap in back
+        #   we do normal fix up
+        #sand trap in front
+        # we fixup to that goal-sandtrap that is in between /2
+        # sand trap in back and front ^
 
 
         cx, cy = current_point
