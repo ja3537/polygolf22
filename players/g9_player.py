@@ -10,22 +10,25 @@ from scipy import stats as scipy_stats
 from typing import Tuple, Iterator, List, Union
 from sympy.geometry import Polygon, Point2D
 from matplotlib.path import Path
-from shapely.geometry import Polygon as ShapelyPolygon, Point as ShapelyPoint
+from shapely.geometry import Polygon as ShapelyPolygon, Point as ShapelyPoint, shape as ShapelyShape
 from scipy.spatial.distance import cdist
+
 
 # Cached distribution
 DIST = scipy_stats.norm(0, 1)
 SAND_DIST = scipy_stats.norm(0, 2)
-X_STEP = 5.0
-Y_STEP = 5.0
+X_STEP = 10
+Y_STEP = 10
 
 
 @functools.lru_cache()
 def standard_ppf(conf: float) -> float:
     return DIST.ppf(conf)
 
+@functools.lru_cache()
 def sand_standard_ppf(conf: float) -> float:
     return SAND_DIST.ppf(conf)
+
 
 def result_point(distance: float, angle: float, current_point: Tuple[float, float]) -> Tuple[float, float]:
     cx, cy = current_point
@@ -43,22 +46,22 @@ def spread_points(current_point, angles: np.array, distance, reverse) -> np.arra
     return np.column_stack((xs, ys))
 
 
-def splash_zone(distance: float, angle: float, conf: float, skill: int, current_point: Tuple[float, float], in_sand_trap: bool) -> np.array:
+def splash_zone(distance: float, angle: float, conf: float, skill: int, current_point: Tuple[float, float], current_point_in_sand: bool) -> np.array:
     conf_points = np.linspace(1 - conf, conf, 5)
 
-    if in_sand_trap:
+    if (current_point_in_sand):
         distances = np.vectorize(sand_standard_ppf)(conf_points) * (distance / skill) + (distance/2)
-        angles = np.vectorize(sand_standard_ppf)(conf_points) * (1 / (2 * skill)) + angle*2
+        angles = np.vectorize(sand_standard_ppf)(conf_points) * (1/(2*skill)) + angle
     else:
         distances = np.vectorize(standard_ppf)(conf_points) * (distance / skill) + distance
-        angles = np.vectorize(standard_ppf)(conf_points) * (1 / (2 * skill)) + angle
+        angles = np.vectorize(standard_ppf)(conf_points) * (1/(2*skill)) + angle
     scale = 1.1
-    if distance <= 20 and not in_sand_trap:
+    if distance <= 20 and not current_point_in_sand:
         scale = 1.0
-    max_distance = distances[-1] * scale
+    max_distance = distances[-1]*scale
     top_arc = spread_points(current_point, angles, max_distance, False)
 
-    if distance > 20 or in_sand_trap:
+    if distance > 20 or current_point_in_sand:
         min_distance = distances[0]
         bottom_arc = spread_points(current_point, angles, min_distance, True)
         return np.concatenate((top_arc, bottom_arc, np.array([top_arc[0]])))
@@ -92,23 +95,21 @@ def poly_to_points(poly: Polygon) -> Iterator[Tuple[float, float]]:
 
 def sympy_poly_to_mpl(sympy_poly: Polygon) -> Path:
     """Helper function to convert sympy Polygon to matplotlib Path object"""
-    v = list(sympy_poly.vertices)
+    v = sympy_poly.vertices
     v.append(v[0])
     return Path(v, closed=True)
 
 
 def sympy_poly_to_shapely(sympy_poly: Polygon) -> ShapelyPolygon:
     """Helper function to convert sympy Polygon to shapely Polygon object"""
-    v = sympy_poly.vertices
+    v = list(sympy_poly.vertices)
     v.append(v[0])
     return ShapelyPolygon(v)
 
 
 class ScoredPoint:
     """Scored point class for use in A* search algorithm"""
-
-    def __init__(self, point: Tuple[float, float], goal: Tuple[float, float], actual_cost=float('inf'), previous=None,
-                 goal_dist=None, skill=50, in_sand_trap=False):
+    def __init__(self, point: Tuple[float, float], goal: Tuple[float, float], actual_cost=float('inf'), previous=None, goal_dist=None, skill=50, in_sand=False):
         self.point = point
         self.goal = goal
 
@@ -120,17 +121,19 @@ class ScoredPoint:
             b = np.array(self.goal)
             goal_dist = np.linalg.norm(a - b)
 
-        if in_sand_trap:
-            max_target_dist = (200 + skill) / 2
-        else:
-            max_target_dist = 200 + skill
+        max_target_dist = 200 + skill
         max_dist = standard_ppf(0.99) * (max_target_dist / skill) + max_target_dist
         max_dist *= 1.10
 
-        if in_sand_trap:
+        max_target_sand_dist = max_target_dist / 2
+        max_sand_dist = sand_standard_ppf(0.99) * (max_target_sand_dist / skill) + max_target_sand_dist
+        max_sand_dist *= 1.10
+        
+        #self._h_cost = (2 if in_sand else 1) * goal_dist / max_dist
+        self._h_cost = goal_dist / max_dist
+        if in_sand:
             self._h_cost = ((goal_dist - max_dist / 2) / max_dist) + 1
-        else:
-            self._h_cost = goal_dist / max_dist
+
 
         self._f_cost = self.actual_cost + self.h_cost
 
@@ -151,20 +154,17 @@ class ScoredPoint:
 
     def __eq__(self, other):
         return self.point == other.point
-
+    
     def __hash__(self):
         return hash(self.point)
-
+    
     def __repr__(self):
         return f"ScoredPoint(point = {self.point}, h_cost = {self.h_cost})"
 
 
 class Player:
-    def __init__(self, skill: int, rng: np.random.Generator, logger: logging.Logger, golf_map: sympy.Polygon,
-                 start: sympy.geometry.Point2D, target: sympy.geometry.Point2D,
-                 sand_traps: List[sympy.geometry.Point2D], map_path: str, precomp_dir: str) -> None:
+    def __init__(self, skill: int, rng: np.random.Generator, logger: logging.Logger, golf_map: sympy.Polygon, start: sympy.geometry.Point2D, target: sympy.geometry.Point2D, sand_traps: List[sympy.Polygon], map_path: str, precomp_dir: str) -> None:
         """Initialise the player with given skill.
-
         Args:
             skill (int): skill of your player
             rng (np.random.Generator): numpy random number generator, use this for same player behvior across run
@@ -179,7 +179,7 @@ class Player:
         # precomp_path = os.path.join(precomp_dir, "{}_skill-{}.pkl".format(map_path, skill))
         # # if doesn't depend on skill
         # precomp_path = os.path.join(precomp_dir, "{}.pkl".format(map_path))
-
+        
         # # precompute check
         # if os.path.isfile(precomp_path):
         #     # Getting back the objects:
@@ -204,22 +204,23 @@ class Player:
         # Cached data
         max_dist = 200 + self.skill
         self.max_ddist = scipy_stats.norm(max_dist, max_dist / self.skill)
-        self.max_sand_ddist =scipy_stats.norm(max_dist/2, max_dist / self.skill*2)
+        self.max_sand_ddist = scipy_stats.norm(max_dist/2, 2 * max_dist / self.skill)
+
         # Conf level
         self.conf = 0.95
         if self.skill < 40:
             self.conf = 0.75
 
-        #get sand_trap
-        self.sand_traps = []
-        for trap in sand_traps:
-            self.sand_traps.append(ShapelyPolygon([(p.x, p.y) for p in trap.vertices]))
+        self.map_points_is_sand = {}
+        self.sand_traps = [sympy_poly_to_shapely(sympy_poly) for sympy_poly in sand_traps]
 
-        self.sand_points={}
+        self.current_shot_in_sand = None
 
         if self.np_map_points is None:
-            self.goal = float(target.x), float(target.y)
-            self._initialize_map_points(self.goal, golf_map)
+                gx, gy = float(target.x), float(target.y)
+                self.goal = float(target.x), float(target.y)
+                self._initialize_map_points((gx, gy), golf_map)
+                # print(f"done init map with {len(self.np_map_points)} points")
 
 
     @functools.lru_cache()
@@ -227,11 +228,10 @@ class Player:
         return self.max_ddist.ppf(1.0 - conf)
 
     @functools.lru_cache()
-    def _max_sand_ddist_ppf(self, conf: float):
+    def _max__sand_ddist_ppf(self, conf: float):
         return self.max_sand_ddist.ppf(1.0 - conf)
 
-    def reachable_point(self, current_point: Tuple[float, float], target_point: Tuple[float, float],
-                        conf: float) -> bool:
+    def reachable_point(self, current_point: Tuple[float, float], target_point: Tuple[float, float], conf: float) -> bool:
         """Determine whether the point is reachable with confidence [conf] based on our player's skill"""
         if type(current_point) == Point2D:
             current_point = tuple(current_point)
@@ -241,66 +241,44 @@ class Player:
         current_point = np.array(current_point).astype(float)
         target_point = np.array(target_point).astype(float)
 
-        if self.in_sand_trap(current_point):
-            return np.linalg.norm(current_point - target_point) <= self._max_sand_ddist_ppf(conf)
-
-        return np.linalg.norm(current_point - target_point) <= self._max_ddist_ppf(conf)
-
-    def splash_zone_within_polygon(self, current_point: Tuple[float, float], target_point: Tuple[float, float],
-                                   conf: float) -> bool:
+        return np.linalg.norm(current_point - target_point) <= self._max_ddist_ppf(conf) if not self.is_in_sand(current_point) else self._max__sand_ddist_ppf(conf)
+    
+    def splash_zone_within_polygon(self, current_point: Tuple[float, float], target_point: Tuple[float, float], conf: float) -> bool:
         if type(current_point) == Point2D:
             current_point = tuple(Point2D)
 
         if type(target_point) == Point2D:
             target_point = tuple(Point2D)
 
-        current_in_sand = self.in_sand_trap(current_point)
-        distance = np.linalg.norm(np.array(current_point).astype(float) - np.array(target_point).astype(float))
-        if current_in_sand:
-            distance = np.linalg.norm(np.array(current_point).astype(float) - np.array(target_point).astype(float))/2
+        this_in_sand = self.is_in_sand(current_point)
 
-
+        distance = np.linalg.norm(np.array(current_point).astype(float) - np.array(target_point).astype(float)) * (2 if this_in_sand else 1)
         cx, cy = current_point
         tx, ty = target_point
         angle = np.arctan2(float(ty) - float(cy), float(tx) - float(cx))
-        splash_zone_poly_points = splash_zone(float(distance), float(angle), float(conf), self.skill, current_point, current_in_sand)
-
-        shapely_splash_zone_poly_points = Polygon(splash_zone_poly_points)
-
+        splash_zone_poly_points = splash_zone(float(distance), float(angle), float(conf), self.skill, current_point, this_in_sand)
+        shapely_splash_zone_poly_points = ShapelyPolygon(splash_zone_poly_points)
 
         if self.shapely_poly.contains(shapely_splash_zone_poly_points):
-            if not self.in_sand_trap(target_point):
+            if not self.is_in_sand(target_point):
                 total_overlap = sum([shapely_splash_zone_poly_points.intersection(sand_trap).area for sand_trap in self.sand_traps if shapely_splash_zone_poly_points.intersects(self.shapely_poly)])
-                return total_overlap / shapely_splash_zone_poly_points.area <= 1 - conf
+                return total_overlap/shapely_splash_zone_poly_points.area <= 1 - conf
             return True
         return False
-
 
     def numpy_adjacent_and_dist(self, point: Tuple[float, float], conf: float):
         cloc_distances = cdist(self.np_map_points, np.array([np.array(point)]), 'euclidean')
         cloc_distances = cloc_distances.flatten()
-        distance_mask = cloc_distances <= self._max_ddist_ppf(conf)
-        if self.in_sand_trap(point):
-            distance_mask = cloc_distances <= self._max_sand_ddist_ppf(conf)
+        distance_mask = cloc_distances <= (self._max_ddist_ppf(conf) if not self.is_in_sand(point) else self._max__sand_ddist_ppf(conf))
 
         reachable_points = self.np_map_points[distance_mask]
         goal_distances = self.np_goal_dist[distance_mask]
 
         return reachable_points, goal_distances
 
-    def in_sand_trap(self, curr_loc):
-        curr_pt = ShapelyPoint(curr_loc[0], curr_loc[1])
-        if(curr_loc not in self.sand_traps):
-            self.sand_points[curr_loc]= any(trap.contains(curr_pt) for trap in self.sand_traps)
-
-        return self.sand_points[curr_loc]
-
-    def next_target(self, curr_loc: Tuple[float, float], goal: Point2D, conf: float) -> Union[
-        None, Tuple[float, float]]:
+    def next_target(self, curr_loc: Tuple[float, float], goal: Point2D, conf: float) -> Union[None, Tuple[float, float]]:
         point_goal = float(goal.x), float(goal.y)
-        curr_loc_in_sand_trap = self.in_sand_trap(curr_loc)
-        heap = [ScoredPoint(curr_loc, point_goal, 0.0, in_sand_trap=curr_loc_in_sand_trap)]
-
+        heap = [ScoredPoint(curr_loc, point_goal, 0.0, in_sand=self.is_in_sand(curr_loc))]
         start_point = heap[0].point
         # Used to cache the best cost and avoid adding useless points to the heap
         best_cost = {tuple(curr_loc): 0.0}
@@ -314,7 +292,7 @@ class Player:
                 continue
             if next_sp.actual_cost > 10:
                 continue
-            if next_sp.actual_cost > 0 and not self.splash_zone_within_polygon(next_sp.previous.point, next_p, conf):
+            if next_sp.actual_cost > 0 and not self.splash_zone_within_polygon(next_sp.previous.point, next_p, conf): #check if shooting from prev to here will land in bounds
                 if next_p in best_cost:
                     del best_cost[next_p]
                 continue
@@ -327,15 +305,14 @@ class Player:
                 while next_sp.previous.point != start_point:
                     next_sp = next_sp.previous
                 return next_sp.point
-
+            
             # Add adjacent points to heap
             reachable_points, goal_dists = self.numpy_adjacent_and_dist(next_p, conf)
             for i in range(len(reachable_points)):
                 candidate_point = tuple(reachable_points[i])
                 goal_dist = goal_dists[i]
-                reachable_in_sand_trap=self.in_sand_trap(reachable_points[i])
                 new_point = ScoredPoint(candidate_point, point_goal, next_sp.actual_cost + 1, next_sp,
-                                        goal_dist=goal_dist, skill=self.skill, in_sand_trap=reachable_in_sand_trap)
+                                        goal_dist=goal_dist, skill=self.skill, in_sand=self.is_in_sand(candidate_point))
                 if candidate_point not in best_cost or best_cost[candidate_point] > new_point.actual_cost:
                     points_checked += 1
                     # if not self.splash_zone_within_polygon(new_point.previous.point, new_point.point, conf):
@@ -353,25 +330,26 @@ class Player:
         self.mpl_poly = sympy_poly_to_mpl(golf_map)
         self.shapely_poly = sympy_poly_to_shapely(golf_map)
         pp = list(poly_to_points(golf_map))
-        for point in pp:
-            # Use matplotlib here because it's faster than shapely for this calculation...
-            if self.mpl_poly.contains_point(point):
-                # map_points.append(point)
-                x, y = point
-                np_map_points.append(np.array([x, y]))
 
-        np_map_points.insert(0,goal)
+        np_map_points = [np.array([x, y]) for x, y in pp if self.mpl_poly.contains_point((x, y))]
+        np_map_points.insert(0, goal)
+
         # self.map_points = np.array(map_points)
         self.np_map_points = np.array(np_map_points)
         self.np_goal_dist = cdist(self.np_map_points, np.array([np.array(self.goal)]), 'euclidean')
         self.np_goal_dist = self.np_goal_dist.flatten()
 
-    def play(self, score: int, golf_map: sympy.Polygon, target: sympy.geometry.Point2D,
-             sand_traps: List[sympy.geometry.Point2D], curr_loc: sympy.geometry.Point2D,
-             prev_loc: sympy.geometry.Point2D, prev_landing_point: sympy.geometry.Point2D, prev_admissible: bool) -> \
-    Tuple[float, float]:
-        """Function which based n current game state returns the distance and angle, the shot must be played
+    def is_in_sand(self, point: sympy.geometry.Point2D):
+        if (type(point) == np.ndarray):
+            point = Point2D(point[0], point[1])
+        if (point not in self.map_points_is_sand):
+            shapelyPoint = ShapelyPoint(point[0], point[1])
+            self.map_points_is_sand[point] = any(s.contains(shapelyPoint) for s in self.sand_traps)
+        return self.map_points_is_sand[point]
 
+
+    def play(self, score: int, golf_map: sympy.Polygon, target: sympy.geometry.Point2D, sand_traps: List[sympy.Polygon], curr_loc: sympy.geometry.Point2D, prev_loc: sympy.geometry.Point2D, prev_landing_point: sympy.geometry.Point2D, prev_admissible: bool) -> Tuple[float, float]:
+        """Function which based n current game state returns the distance and angle, the shot must be played
         Args:
             score (int): Your total score including current turn
             golf_map (sympy.Polygon): Golf Map polygon
@@ -380,18 +358,20 @@ class Player:
             prev_loc (sympy.geometry.Point2D): Your previous location. If you haven't played previously then None
             prev_landing_point (sympy.geometry.Point2D): Your previous shot landing location. If you haven't played previously then None
             prev_admissible (bool): Boolean stating if your previous shot was within the polygon limits. If you haven't played previously then None
-
         Returns:
             Tuple[float, float]: Return a tuple of distance and angle in radians to play the shot
         """
         if self.np_map_points is None:
             gx, gy = float(target.x), float(target.y)
             self.goal = float(target.x), float(target.y)
-            self._initialize_map_points((gx, gy), golf_map)
+            self._initialize_map_points((gx, gy), golf_map) ## initrialize at runtime? multi thread it?
 
         # Optimization to retry missed shots
-        if self.prev_rv is not None and curr_loc == prev_loc:
+        if not prev_admissible and self.prev_rv is not None:
             return self.prev_rv
+
+        self.current_shot_in_sand = self.is_in_sand(curr_loc)
+        # print(f"Current shot in sand: {self.current_shot_in_sand}")
 
         target_point = None
         confidence = self.conf
@@ -400,7 +380,7 @@ class Player:
             if confidence <= 0.5:
                 return None
 
-            # print(f"searching with {confidence} confidence")
+            # print(f"turn # {score} searching with {confidence} confidence")
             target_point = self.next_target(cl, target, confidence)
             confidence -= 0.05
 
@@ -411,13 +391,12 @@ class Player:
             v = np.array(target_point) - current_point
             # Unit vector pointing from current to target
             u = v / original_dist
-            if original_dist >= 20.0 or self.in_sand_trap(curr_loc):
-                roll_distance = original_dist / 20
+            if original_dist >= 20.0 or self.current_shot_in_sand:
+                roll_distance = original_dist /  20
                 max_offset = roll_distance
                 offset = 0
                 prev_target = target_point
-                while offset < max_offset and self.splash_zone_within_polygon(tuple(current_point), target_point,
-                                                                              confidence):
+                while offset < max_offset and self.splash_zone_within_polygon(tuple(current_point), target_point, confidence):
                     offset += 1
                     dist = original_dist - offset
                     prev_target = target_point
@@ -431,36 +410,3 @@ class Player:
         rv = curr_loc.distance(Point2D(target_point, evaluate=False)), angle
         self.prev_rv = rv
         return rv
-
-
-# === Unit Tests ===
-
-def test_reachable():
-    current_point = Point2D(0, 0, evaluate=False)
-    target_point = Point2D(0, 250, evaluate=False)
-    player = Player(50, 0xdeadbeef, None)
-
-    assert not player.reachable_point(current_point, target_point, 0.80)
-
-
-def test_splash_zone_within_polygon():
-    poly = Polygon((0, 0), (0, 300), (300, 300), (300, 0), evaluate=False)
-
-    current_point = Point2D(0, 0, evaluate=False)
-
-    # Just checking polygons inside and outside
-    inside_target_point = Point2D(150, 150, evaluate=False)
-    outside_target_point = Point2D(299, 100, evaluate=False)
-
-    player = Player(50, 0xdeadbeef, None)
-    assert player.splash_zone_within_polygon(current_point, inside_target_point, poly, 0.8)
-    assert not player.splash_zone_within_polygon(current_point, outside_target_point, poly, 0.8)
-
-
-def test_poly_to_points():
-    poly = Polygon((0, 0), (0, 10), (10, 10), (10, 0))
-    points = set(poly_to_points(poly))
-    for x in range(1, 10):
-        for y in range(1, 10):
-            assert (x, y) in points
-    assert len(points) == 81
