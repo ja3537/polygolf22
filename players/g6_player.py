@@ -1,3 +1,5 @@
+import os
+import pickle
 import numpy as np
 import sympy
 import logging
@@ -17,7 +19,26 @@ class Player:
             map_path (str): File path to map
             precomp_dir (str): Directory path to store/load precomputation
         """
+        # # if depends on skill
+        # precomp_path = os.path.join(precomp_dir, "{}_skill-{}.pkl".format(map_path, skill))
+        # # if doesn't depend on skill
+        # precomp_path = os.path.join(precomp_dir, "{}.pkl".format(map_path))
+        
+        # # precompute check
+        # if os.path.isfile(precomp_path):
+        #     # Getting back the objects:
+        #     with open(precomp_path, "rb") as f:
+        #         self.obj0, self.obj1, self.obj2 = pickle.load(f)
+        # else:
+        #     # Compute objects to store
+        #     self.obj0, self.obj1, self.obj2 = _
 
+        #     # Dump the objects
+        #     with open(precomp_path, 'wb') as f:
+        #         pickle.dump([self.obj0, self.obj1, self.obj2], f)
+        self.skill = skill
+        self.rng = rng
+        self.logger = logger
 
     def play(self, score: int, golf_map: sympy.Polygon, target: sympy.geometry.Point2D, sand_traps: List[sympy.geometry.Point2D], curr_loc: sympy.geometry.Point2D, prev_loc: sympy.geometry.Point2D, prev_landing_point: sympy.geometry.Point2D, prev_admissible: bool) -> Tuple[float, float]:
         """Function which based n current game state returns the distance and angle, the shot must be played
@@ -34,3 +55,10 @@ class Player:
         Returns:
             Tuple[float, float]: Return a tuple of distance and angle in radians to play the shot
         """
+        required_dist = curr_loc.distance(target)
+        roll_factor = 1.1
+        if required_dist < 20:
+            roll_factor  = 1.0
+        distance = sympy.Min(200+self.skill, required_dist/roll_factor)
+        angle = sympy.atan2(target.y - curr_loc.y, target.x - curr_loc.x)
+        return (distance, angle)
