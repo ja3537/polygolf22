@@ -7,6 +7,7 @@ import sklearn.cluster
 import logging
 import matplotlib.pyplot as plt
 
+from math import floor
 import os
 import pickle
 import functools
@@ -70,72 +71,6 @@ class TestPlayer:
         distance = sympy.Min(200+self.skill, required_dist/roll_factor)
         angle = sympy.atan2(target.y - curr_loc.y, target.x - curr_loc.x)
         return (distance, angle)
-
-    def split_polygon(self, golf_map: sympy.Polygon, sand_traps: List[shapely.geometry.Polygon], regions: int) -> List[shapely.geometry.Polygon]:
-        """ Split a given Golf Map into regions of roughly equal size.
-        Based on an algorithm described by Paul Ramsey: http://blog.cleverelephant.ca/2018/06/polygon-splitting.html
-
-        Args:
-            golf_map (shapely.geometry.Polygon): The Golf Map to split into equal sized regions
-            sand_traps (shapely.geometry.Polygon): A list of Sand Traps contained within the Golf Map 
-            regions (int): The number of roughly equal sized regions to split the map into
-
-        Returns:
-            List[shapely.geometry.Polygon]: Returns a list of polygons, each representing a roughly equal sized region of the given map
-
-        """
-
-        # Naively insert holes into the given map where there are sand traps
-        golf_map_with_holes = shapely.geometry.Polygon(golf_map.exterior.coords, [list(st.exterior.coords) for st in sand_traps])
-
-        # Generate random points within the bounds of the given map
-        # (based on https://gis.stackexchange.com/questions/207731/generating-random-coordinates-in-multipolygon-in-python)
-        points = []
-        min_x, min_y, max_x, max_y = golf_map_with_holes.bounds
-        # while len(points) < POINTS_PER_REGION*regions:
-        #     pt = shapely.geometry.Point(random.uniform(min_x, max_x), random.uniform(min_y, max_y))
-        #     if golf_map_with_holes.contains(pt):
-        #         points.append(pt)
-
-        # Generate a dense grid of points (0.5m spacing) within the bounds of a given map
-        # Produces more homogenous regions with centroids almost exactly in the middle
-        for x in np.arange(min_x, max_x, 0.5):
-            for y in np.arange(min_y, max_y, 0.5):
-                pt = shapely.geometry.Point(x, y)
-                if golf_map_with_holes.contains(pt):  # and not combined_buffer_zones.contains(pt):
-                    points.append(pt)
-
-
-        # Cluster the random points into groups using kmeans
-        points_df = pd.DataFrame([[pt.x, pt.y] for pt in points], columns=['x', 'y'])
-        kmeans = sklearn.cluster.KMeans(n_clusters=regions, init='k-means++').fit(points_df)
-
-        # Find the centroids of the sandtraps and make a combined list:
-        st_centers = [shapely.geometry.Polygon(coords).centroid for coords in
-                      [list(st.exterior.coords) for st in sand_traps]]
-        center_points = shapely.geometry.MultiPoint(st_centers).union(
-            shapely.geometry.MultiPoint(kmeans.cluster_centers_))
-
-        # Generate a voronoi diagram from the centers of the generated regions
-        # and the centers of sandtraps:
-        # center_points = shapely.geometry.MultiPoint(kmeans.cluster_centers_)
-        regions = shapely.ops.voronoi_diagram(center_points)
-
-        # Intersect the generated regions with the given map
-        regions = [region.intersection(golf_map_with_holes) for region in regions.geoms]
-
-        # Plot the random points, cluster centers, and voronoi regions
-        plt.figure(dpi=200)
-        plt.axis('equal')
-        plt.plot(*golf_map_with_holes.exterior.xy)
-        plt.scatter([pt.x for pt in points], [pt.y for pt in points], s=5)
-        plt.scatter([pt[0] for pt in kmeans.cluster_centers_], [pt[1] for pt in kmeans.cluster_centers_], color='red')
-        for region in regions:
-            plt.plot(*region.exterior.xy)
-        plt.savefig('voronoi_plot')
-
-        return regions
-
 
 # Cached distribution
 DIST = scipy_stats.norm(0, 1)
@@ -266,6 +201,114 @@ class ScoredPoint:
         return f"ScoredPoint(point = {self.point}, h_cost = {self.h_cost})"
 
 
+def create_vornoi_regions(map: sympy.Polygon, region_num: int) -> List[shapely.geometry.Polygon]:
+    points = []
+    min_x, min_y, max_x, max_y = map.bounds
+    # Generate a dense grid of points (0.5m spacing) within the bounds of a given map
+    # Produces more homogenous regions with centroids almost exactly in the middle
+    for x in np.arange(min_x, max_x, 0.1):
+        for y in np.arange(min_y, max_y, 0.1):
+            pt = shapely.geometry.Point(x, y)
+            if map.contains(pt):  # and not combined_buffer_zones.contains(pt):
+                points.append(pt)
+    # Cluster the random points into groups using kmeans
+    points_df = pd.DataFrame([[pt.x, pt.y] for pt in points], columns=['x', 'y'])
+    kmeans = sklearn.cluster.KMeans(n_clusters=region_num, init='k-means++').fit(points_df)
+
+    # Generate a voronoi diagram from the centers of the generated regions
+    # center_points = shapely.geometry.MultiPoint(kmeans.cluster_centers_)
+    center_points = shapely.geometry.MultiPoint(kmeans.cluster_centers_)
+    regions = shapely.ops.voronoi_diagram(center_points, edges=False)
+
+    # Intersect the generated regions with the given map
+    regions = [region.intersection(map) for region in regions.geoms]
+    return regions
+
+
+def split_polygon(golf_map: sympy.Polygon, sand_traps: List[shapely.geometry.Polygon], region_num: int) -> List[shapely.geometry.Polygon]:
+    """ Split a given Golf Map into regions of roughly equal size.
+    Based on an algorithm described by Paul Ramsey: http://blog.cleverelephant.ca/2018/06/polygon-splitting.html
+
+    Args:
+        golf_map (shapely.geometry.Polygon): The Golf Map to split into equal sized regions
+        sand_traps (shapely.geometry.Polygon): A list of Sand Traps contained within the Golf Map 
+        regions (int): The number of roughly equal sized regions to split the map into
+
+    Returns:
+        List [
+            List[(x,y)]: Returns a list of points representing centroids of polygons on the map
+            Dict[coord tuple => [shapely.geometry.Polygon, string 's'|'g']]  Returns a dict with polygons
+             and indication of whether or not the point is sand
+        ]
+    """
+
+    # Naively insert holes into the given map where there are sand traps
+    golf_map_with_holes = shapely.geometry.Polygon(golf_map.exterior.coords, [list(st.exterior.coords) for st in sand_traps])
+
+    # Generate random points within the bounds of the given map
+    # (based on https://gis.stackexchange.com/questions/207731/generating-random-coordinates-in-multipolygon-in-python)
+    # while len(points) < POINTS_PER_REGION*regions:
+    #     pt = shapely.geometry.Point(random.uniform(min_x, max_x), random.uniform(min_y, max_y))
+    #     if golf_map_with_holes.contains(pt):
+    #         points.append(pt)
+
+    points = []
+    min_x, min_y, max_x, max_y = golf_map_with_holes.bounds
+    # Generate a dense grid of points (0.5m spacing) within the bounds of a given map
+    # Produces more homogenous regions with centroids almost exactly in the middle
+    for x in np.arange(min_x, max_x, 0.5):
+        for y in np.arange(min_y, max_y, 0.5):
+            pt = shapely.geometry.Point(x, y)
+            if golf_map_with_holes.contains(pt):  # and not combined_buffer_zones.contains(pt):
+                points.append(pt)
+    # Cluster the random points into groups using kmeans
+    points_df = pd.DataFrame([[pt.x, pt.y] for pt in points], columns=['x', 'y'])
+    kmeans = sklearn.cluster.KMeans(n_clusters=region_num, init='k-means++').fit(points_df)
+
+    # Generate a voronoi diagram from the centers of the generated regions
+    # center_points = shapely.geometry.MultiPoint(kmeans.cluster_centers_)
+    center_points = shapely.geometry.MultiPoint(kmeans.cluster_centers_)
+    regions = shapely.ops.voronoi_diagram(center_points, edges=False)
+
+    # Intersect the generated regions with the given map
+    regions = [region.intersection(golf_map_with_holes) for region in regions.geoms]
+
+    centroids_dict = {(region.centroid.x, region.centroid.y): [region, 'g'] for region in regions}
+
+    # Find total and avg area
+    total_area = 0
+    for region in regions:
+        # Could potentially perform some kind of check for area in comparison to 95% confidence interval here?
+        total_area += region.area
+    avg_area_centroid = total_area/len(regions)
+
+    st_regions = []
+    for st in sand_traps:
+        num_points = max(floor(st.area/avg_area_centroid), 1)
+        # If there are 1 more or points run k means else use already exsisting geometry
+        if num_points > 1:
+            st_regions.extend(create_vornoi_regions(st, num_points))
+        else:
+
+            st_regions.append(st)
+
+    # add all regions together and prepare returnables
+    regions.extend(st_regions)
+    centroids_dict.update({(region.centroid.x, region.centroid.y): [region, 's'] for region in st_regions})
+    centroids = [(region.centroid.x, region.centroid.y) for region in regions]
+
+    # Plot the random points, cluster centers, and voronoi regions
+    plt.figure(dpi=200)
+    plt.axis('equal')
+    plt.plot(*golf_map_with_holes.exterior.xy)
+    plt.scatter([pt.x for pt in points], [pt.y for pt in points], s=5)
+    plt.scatter([pt[0] for pt in kmeans.cluster_centers_], [pt[1] for pt in kmeans.cluster_centers_], color='red')
+    for region in regions:
+        plt.plot(*region.exterior.xy)
+    plt.savefig('voronoi_plot')
+
+    return [centroids, centroids_dict]
+
 class Player:
     def __init__(self, skill: int, rng: np.random.Generator, logger: logging.Logger, golf_map: sympy.Polygon, start: sympy.geometry.Point2D, target: sympy.geometry.Point2D, sand_traps, map_path: str, precomp_dir: str) -> None:
         """Initialise the player with given skill.
@@ -297,6 +340,9 @@ class Player:
         #     # Dump the objects
         #     with open(precomp_path, 'wb') as f:
         #         pickle.dump([self.obj0, self.obj1, self.obj2], f)
+        self.shapely_map = shapely.geometry.Polygon(golf_map.vertices)
+        self.shapely_sand_traps = [shapely.geometry.Polygon(st.vertices) for st in sand_traps]
+        self.centroids, self.centroids_dict = split_polygon(self.shapely_map, self.shapely_sand_traps, 50)
         self.skill = skill
         self.rng = rng
         self.logger = logger
@@ -415,10 +461,11 @@ class Player:
         # self.mpl_poly = sympy_poly_to_mpl(golf_map)
         # self.shapely_poly = sympy_poly_to_shapely(golf_map)
         self.shapely_poly = golf_map
-        pp = list(poly_to_points(golf_map))
+        #pp = list(poly_to_points(golf_map))
+        pp = self.centroids
         for point in pp:
             # Use matplotlib here because it's faster than shapely for this calculation...
-            if self.shapely_poly.contains(ShapelyPoint(point)):
+            #if self.shapely_poly.contains(ShapelyPoint(point)):
                 # map_points.append(point)
                 x, y = point
                 np_map_points.append(np.array([x, y]))
