@@ -439,7 +439,7 @@ class Player:
         target_path_length = None
 
         for confidence in confidence_intervals:
-            # print(f"turn # {score} searching with {confidence} confidence")
+            print(f"turn # {score} searching with {confidence} confidence")
             target_point, target_path_length = self.next_target(cl, target, confidence)
             if target_point is None:
                 continue
@@ -454,8 +454,9 @@ class Player:
         
         if len(target_points) == 0:
             return None
-        smallest_path = min(target_points.values(), key=lambda x: x["target_path_length"])
-        max_confidence_of_smallest_path = max(x["confidence"] for x in target_points.values() if x["target_path_length"] == smallest_path)
+        print(target_points)
+        smallest_path = min([target["target_path_length"] for target in target_points.values()])
+        max_confidence_of_smallest_path = max([target["confidence"] for target in target_points.values() if target["target_path_length"] == smallest_path])
         target_point = target_points[max_confidence_of_smallest_path]["target_point"]
 
 
