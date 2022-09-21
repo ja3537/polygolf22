@@ -104,4 +104,7 @@ class Player:
         plt.show()
 
         return regions
+    
+    def lable_cost( sand_traps: List[shapely.geometry.Polygon],evenly_split_map):
+        #would take in the evenly_split map with the given region, and account for the sandtrap
 
