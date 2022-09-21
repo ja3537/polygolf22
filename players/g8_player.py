@@ -57,6 +57,8 @@ DIST = scipy_stats.norm(0, 1)
 X_STEP = 5.0
 Y_STEP = 5.0
 
+#Sampling Size
+SAMPLE_SIZE = 10000
 
 @functools.lru_cache()
 def standard_ppf(conf: float) -> float:
@@ -101,28 +103,6 @@ def splash_zone(distance: float, angle: float, conf: float, skill: int, current_
     current_point = np.array([current_point])
     return np.concatenate((current_point, top_arc, current_point))
 
-
-def poly_to_points(poly: Polygon) -> Iterator[Tuple[float, float]]:
-    x_min, y_min = float('inf'), float('inf')
-    x_max, y_max = float('-inf'), float('-inf')
-    for point in poly.vertices:
-        x = float(point.x)
-        y = float(point.y)
-        x_min = min(x, x_min)
-        x_max = max(x, x_max)
-        y_min = min(y, y_min)
-        y_max = max(y, y_max)
-    x_step = X_STEP
-    y_step = Y_STEP
-
-    x_current = x_min
-    y_current = y_min
-    while x_current < x_max:
-        while y_current < y_max:
-            yield float(x_current), float(y_current)
-            y_current += y_step
-        y_current = y_min
-        x_current += x_step
 
 
 def sympy_poly_to_mpl(sympy_poly: Polygon) -> Path:
@@ -220,7 +200,7 @@ class Player:
         self.rng = rng
         self.logger = logger
         self.np_map_points = None
-        self.mpl_paly = None
+        self.mpl_poly = None
         self.shapely_poly = None
         self.goal = None
         self.prev_rv = None
@@ -229,7 +209,8 @@ class Player:
         max_dist = 200 + self.skill
         self.max_ddist = scipy_stats.norm(max_dist, max_dist / self.skill)
 
-
+        self.np_sand_trap_points = None
+        self.mpl_sand_polys = None
         self.max_sand_ddist = scipy_stats.norm(max_dist / 2, (max_dist / self.skill)*2)
 
         # Conf level
@@ -247,6 +228,7 @@ class Player:
 
     def reachable_point(self, current_point: Tuple[float, float], target_point: Tuple[float, float], conf: float) -> bool:
         """Determine whether the point is reachable with confidence [conf] based on our player's skill"""
+
         if type(current_point) == Point2D:
             current_point = tuple(current_point)
         if type(target_point) == Point2D:
@@ -255,11 +237,11 @@ class Player:
         current_point = np.array(current_point).astype(float)
         target_point = np.array(target_point).astype(float)
 
-        # if in sand trap:
-        #   return np.linalg.norm(current_point - target_point) <= self._max_sand_ddist_ppf(conf)
+        if self.point_in_sandtrap_mpl(current_point):
+            return np.linalg.norm(current_point - target_point) <= self._max_sand_ddist_ppf(conf)
+        else:
+            return np.linalg.norm(current_point - target_point) <= self._max_ddist_ppf(conf)
 
-        return np.linalg.norm(current_point - target_point) <= self._max_ddist_ppf(conf)
-    
     def splash_zone_within_polygon(self, current_point: Tuple[float, float], target_point: Tuple[float, float], conf: float) -> bool:
         if type(current_point) == Point2D:
             current_point = tuple(Point2D)
@@ -269,9 +251,8 @@ class Player:
 
         #CHANGES: checks if point shot from is in sandtrap
         in_sandtrap = False
-        if np.any(self.np_sand_trap_points == current_point):
+        if  current_point in np.array(self.np_sand_trap_points):
             in_sandtrap = True
-
 
         distance = np.linalg.norm(np.array(current_point).astype(float) - np.array(target_point).astype(float))
         cx, cy = current_point
@@ -285,24 +266,31 @@ class Player:
     def numpy_adjacent_and_dist (self, point: Tuple[float, float], conf: float):
         cloc_distances = cdist(self.np_map_points, np.array([np.array(point)]), 'euclidean')
         cloc_distances = cloc_distances.flatten()
-        distance_mask = cloc_distances <= self._max_ddist_ppf(conf)
 
+        distance_mask = cloc_distances <= self._max_ddist_ppf(conf)
         sand_trap_distance_mask = cloc_distances <= self._max_sand_ddist_ppf(conf)
 
         reachable_points = None
-        if point in np.array(self.np_sand_trap_points):
+        if self.point_in_sandtrap_mpl(point):
             reachable_points = self.np_map_points[sand_trap_distance_mask]
         else:
             reachable_points = self.np_map_points[distance_mask]
         
         goal_distances = self.np_goal_dist[distance_mask]
-
         return reachable_points, goal_distances
+    
+    def point_in_sandtrap_mpl(self, current_point: Tuple[float, float]) -> bool:
+        for sandtrap in self.mpl_sand_polys:
+            if sandtrap.contains_point(current_point):
+                return True
+        
+        return False
 
     def next_target(self, curr_loc: Tuple[float, float], goal: Point2D, conf: float) -> Union[None, Tuple[float, float]]:
         point_goal = float(goal.x), float(goal.y)
         heap = [ScoredPoint(curr_loc, point_goal, 0.0)]
         start_point = heap[0].point
+
         # Used to cache the best cost and avoid adding useless points to the heap
         best_cost = {tuple(curr_loc): 0.0}
         visited = set()
@@ -350,29 +338,97 @@ class Player:
     def _initialize_map_points(self, goal: Tuple[float, float], golf_map: Polygon, sand_traps: list[sympy.Polygon]):
         # Storing the points as numpy array
         np_map_points = [goal]
-        map_points = [goal]
-        self.np_sand_trap_points = []
+        np_sand_trap_points = []
         self.mpl_poly = sympy_poly_to_mpl(golf_map)
         self.shapely_poly = sympy_poly_to_shapely(golf_map)
 
         self.mpl_sand_polys = [sympy_poly_to_mpl(sand_trap) for sand_trap in sand_traps]
 
-        pp = list(poly_to_points(golf_map))
+        pp = self.poly_to_points(poly = golf_map, mpl_poly = self.mpl_poly)
         for point in pp:
             # Use matplotlib here because it's faster than shapely for this calculation...
-            if self.mpl_poly.contains_point(point):
+            """if self.mpl_poly.contains_point(point):
                 # map_points.append(point)
                 x, y = point
-                np_map_points.append(np.array([x, y]))
+                np_map_points.append(np.array([x, y]))"""
+
+            x, y = point
+            np_map_points.append(np.array([x, y]))
 
             for sandtrap in self.mpl_sand_polys:
                 if sandtrap.contains_point(point):
                     x, y = point
-                    self.np_sand_trap_points.append(np.array([x, y]))
-        # self.map_points = np.array(map_points)
+                    np_sand_trap_points.append(np.array([x, y]))
+
+        #add points along edges of map  
+        np_map_points += self.polygon_edge_sampler(golf_map, 40)
+
+        #add points along edges of sandtraps
+        for s in sand_traps:
+            temp = self.polygon_edge_sampler(s, 20)
+
+            #add the sand trap edges to both the map_points and sand_trap_points
+            np_map_points += temp
+            np_sand_trap_points += temp
+
         self.np_map_points = np.array(np_map_points)
+        self.np_sand_trap_points = np.array(np_sand_trap_points)
         self.np_goal_dist = cdist(self.np_map_points, np.array([np.array(self.goal)]), 'euclidean')
         self.np_goal_dist = self.np_goal_dist.flatten()
+    
+    def poly_to_points(self, poly: Polygon, mpl_poly: Path) -> list[Tuple[float, float]]:
+
+        result = []
+
+        #finds the rectangular boundry of the map
+        x_min, y_min = float('inf'), float('inf')
+        x_max, y_max = float('-inf'), float('-inf')
+        for point in poly.vertices:
+            x = float(point.x)
+            y = float(point.y)
+            x_min = min(x, x_min)
+            x_max = max(x, x_max)
+            y_min = min(y, y_min)
+            y_max = max(y, y_max)
+        #x_step = X_STEP
+        #y_step = Y_STEP
+
+        point_count = 0
+
+        while point_count < SAMPLE_SIZE:
+            x_rand = self.rng.uniform(x_min, x_max)
+            y_rand = self.rng.uniform(y_min, y_max)
+
+            p = (x_rand, y_rand)
+
+            if mpl_poly.contains_point(p):
+                point_count += 1
+                result.append(p)
+
+        """x_current = x_min
+        y_current = y_min
+        while x_current < x_max:
+            while y_current < y_max:
+                yield float(x_current), float(y_current)
+                y_current += y_step
+            y_current = y_min
+            x_current += x_step"""
+        
+        return result
+
+    def polygon_edge_sampler(self, poly: Polygon, points_per_edge: int) -> list[np.array([float, float])]:
+        result = []
+
+        v = poly.vertices
+        for p in range(len(v)):
+            start = v[p-1]
+            end = v[p]
+
+            x_val = np.linspace(start = float(start.x), stop = float(end.x), num = points_per_edge, dtype=float)
+            y_val = np.linspace(start = float(start.y), stop = float(end.y), num = points_per_edge, dtype=float)
+            result += list(np.array((x_val,y_val)).T)
+
+        return result
 
     def play(self, score: int, golf_map: sympy.Polygon, target: sympy.geometry.Point2D, sand_traps: list[sympy.Polygon], curr_loc: sympy.geometry.Point2D, prev_loc: sympy.geometry.Point2D, prev_landing_point: sympy.geometry.Point2D, prev_admissible: bool) -> Tuple[float, float]:
         """Function which based n current game state returns the distance and angle, the shot must be played 

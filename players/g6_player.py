@@ -171,6 +171,7 @@ class Player:
         #     # Compute objects to store
         #     self.obj0, self.obj1, self.obj2 = _
 
+
         #     # Dump the objects
         #     with open(precomp_path, 'wb') as f:
         #         pickle.dump([self.obj0, self.obj1, self.obj2], f)
@@ -186,6 +187,7 @@ class Player:
         # Cached data
         max_dist = 200 + self.skill
         self.max_ddist = scipy_stats.norm(max_dist, max_dist / self.skill)
+
 
         # Conf level
         self.conf = 0.95
@@ -312,6 +314,7 @@ class Player:
         Returns:
             Tuple[float, float]: Return a tuple of distance and angle in radians to play the shot
         """
+
         if self.np_map_points is None:
             gx, gy = float(target.x), float(target.y)
             self.goal = float(target.x), float(target.y)
@@ -391,3 +394,4 @@ def test_poly_to_points():
         for y in range(1, 10):
             assert (x,y) in points
     assert len(points) == 81
+
