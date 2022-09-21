@@ -210,7 +210,7 @@ class ScoredPoint:
 
 
 class Player:
-    AVOID_SAND_PENALTY = 2
+    AVOID_SAND_PENALTY = 0.1
 
     def __init__(self, skill: int, rng: np.random.Generator, logger: logging.Logger, golf_map: sympy.Polygon, start: sympy.geometry.Point2D, target: sympy.geometry.Point2D, sand_traps: List[sympy.Polygon], map_path: str, precomp_dir: str) -> None:
         """Initialise the player with given skill.
