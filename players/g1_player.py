@@ -13,6 +13,8 @@ from matplotlib.path import Path
 from shapely.geometry import Polygon as ShapelyPolygon, Point as ShapelyPoint
 from scipy.spatial.distance import cdist
 
+import constants
+
 
 # Cached distribution
 DIST = scipy_stats.norm(0, 1)
@@ -140,8 +142,24 @@ def find_map_points_in_sand_trap(map_points: List[Tuple[float, float]], sand_tra
 
     return points_in_sand_trap
 
-def roll(src: Tuple[float, float], dst: Tuple[float, float], rolling_factor: float) -> Tuple[float, float]:
-    return dst
+def roll(current_point: Tuple[float, float], target_point: Tuple[float, float], rolling_factor: float) -> Tuple[float, float]:
+    """Returns the final point along the line formed by @current_point, @target_point,
+    but (1.0 + @rolling_factor) times the distance between @current_point and @target_point
+    away from the @current_point.
+    """
+    cx, cy = current_point
+    tx, ty = target_point
+    curr_loc = Point2D(current_point)
+
+    angle = np.arctan2(ty - cy, tx - cx)
+    distance = curr_loc.distance(Point2D(target_point, evaluate=False))
+
+    final_x, final_y = sympy.Point2D(
+        curr_loc.x + (1. + rolling_factor) * distance * sympy.cos(angle),
+        curr_loc.y + (1. + rolling_factor) * distance * sympy.sin(angle))
+    
+
+    return (float(final_x), float(final_y))
 
 class ScoredPoint:
     """Scored point class for use in A* search algorithm"""
@@ -331,9 +349,9 @@ class Player:
                 return next_sp.point
 
             # Add adjacent points to heap
-            next_p_after_rolling = next_p if next_sp.previous is None else roll(next_sp.previous.point, next_p, 1.1)
+            next_p_after_rolling = next_p if next_sp.previous is None else roll(next_sp.previous.point, next_p, constants.extra_roll)
             reachable_points, goal_dists = self.numpy_adjacent_and_dist(
-                next_p_after_rolling, conf, is_in_sand_trap(next_p, self.sand_trap_matlab_polys, cache=self.map_points_in_sand_trap))
+                next_p_after_rolling, conf, is_in_sand_trap(next_p_after_rolling, self.sand_trap_matlab_polys, cache=self.map_points_in_sand_trap))
 
             for i in range(len(reachable_points)):
                 candidate_point = tuple(reachable_points[i])
@@ -554,3 +572,24 @@ def test_find_map_points_in_sand_trap():
         points_in_sand_trap = find_map_points_in_sand_trap(
             tc["map_points"], sand_trap_paths)
         assert points_in_sand_trap == tc["expect"]
+
+def test_roll():
+    cases = [
+        {
+            "current_point": (0.0, 0.0),
+            "target_point": (10.0, 0.0),
+            "rolling_factor": 0.1,
+            "expect": (11.0, 0.0)
+        },
+        {
+            "current_point": (0.0, 0.0),
+            "target_point": (3.0, 3.0),
+            "rolling_factor": 0.5,
+            "expect": (4.5, 4.5)
+        }
+    ]
+
+    for tc in cases:
+        ans = roll(tc["current_point"], tc["target_point"], tc["rolling_factor"])
+        assert ans == tc["expect"]
+        assert type(ans[0]) == float and type(ans[1]) == float
