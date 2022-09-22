@@ -81,16 +81,18 @@ def spread_points(current_point, angles: np.array, distance, reverse) -> np.arra
     return np.column_stack((xs, ys))
 
 
-def splash_zone(distance: float, angle: float, conf: float, skill: int, current_point: Tuple[float, float], in_sandtrap: bool = False) -> np.array:
+def splash_zone(distance: float, angle: float, conf: float, skill: int, current_point: Tuple[float, float], current_in_sandtrap: bool = False, target_in_sandtrap: bool = False) -> np.array:
     conf_points = np.linspace(1 - conf, conf, 5)
     distances = np.vectorize(standard_ppf)(conf_points) * (distance / skill) + distance
 
-    angle_factor = 2 if in_sandtrap else 1
+    angle_factor = 2 if current_in_sandtrap else 1
 
     angles = np.vectorize(standard_ppf)(conf_points) * (1*angle_factor/(2*skill)) + angle
 
     scale = 1.1
-    if distance <= 20:
+
+    #when in in_sandtrap, do not account for rolling by extending splash zone
+    if distance <= 20 or target_in_sandtrap:
         scale = 1.0
     max_distance = distances[-1]*scale
     top_arc = spread_points(current_point, angles, max_distance, False)
@@ -250,9 +252,14 @@ class Player:
             target_point = tuple(Point2D)
 
         #CHANGES: checks if point shot from is in sandtrap
-        in_sandtrap = False
+        current_in_sandtrap = False
         if  current_point in np.array(self.np_sand_trap_points):
-            in_sandtrap = True
+            current_in_sandtrap = True
+
+        #CHANGES: checks if landing point is in sandtrap
+        target_in_sandtrap = False
+        if  target_point in np.array(self.np_sand_trap_points):
+            target_in_sandtrap = True
 
         distance = np.linalg.norm(np.array(current_point).astype(float) - np.array(target_point).astype(float))
         cx, cy = current_point
@@ -260,7 +267,7 @@ class Player:
         angle = np.arctan2(float(ty) - float(cy), float(tx) - float(cx))
 
         #CHANGES: add in_sandtrap
-        splash_zone_poly_points = splash_zone(float(distance), float(angle), float(conf), self.skill, current_point, in_sandtrap)
+        splash_zone_poly_points = splash_zone(float(distance), float(angle), float(conf), self.skill, current_point, current_in_sandtrap, target_in_sandtrap)
         return self.shapely_poly.contains(ShapelyPolygon(splash_zone_poly_points))
 
     def numpy_adjacent_and_dist (self, point: Tuple[float, float], conf: float):
@@ -461,7 +468,6 @@ class Player:
             if confidence <= 0.5:
                 return None
 
-            # print(f"searching with {confidence} confidence")
             target_point = self.next_target(cl, target, confidence)
             confidence -= 0.05
 
@@ -473,7 +479,7 @@ class Player:
             # Unit vector pointing from current to target
             u = v / original_dist
             if original_dist >= 20.0:
-                roll_distance = original_dist / 20
+                roll_distance = original_dist * 0.1
                 max_offset = roll_distance
                 offset = 0
                 prev_target = target_point
