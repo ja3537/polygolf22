@@ -164,6 +164,19 @@ class ScoredPoint:
 
 class Player:
     def __init__(self, skill: int, rng: np.random.Generator, logger: logging.Logger, golf_map: sympy.Polygon, start: sympy.geometry.Point2D, target: sympy.geometry.Point2D, sand_traps: List[sympy.Polygon], map_path: str, precomp_dir: str) -> None:
+        # 1. Create a new List[sympy.Polygon]
+            # sand = []
+        # 2. Idea: Expand the sandtrap by a very small margin in order to avoid pusher problem, inward or outward.
+        # Case 1: if a piece of sandtrap is encircled by green, we expand the perimeter outward
+            # implementation: probably using some function in sympy.Polygon expand or increase perimeter
+
+        # 3. Case 2: if a piece of land is surrounded by sandtrap, we reduce the perimeter
+        # of the land by increasing the size of the sandtrap inward by a small margin. 
+            # implementation: probably by checking whether a land Polygon lies within a sandtrap, then we increase
+            # the size of the sandtrap inward
+        # 4. assign the generated new list to sand_traps
+            # sand_traps = sand
+
         """Initialise the player with given skill.
         Args:
             skill (int): skill of your player
