@@ -208,8 +208,10 @@ class Player:
 
         # Conf level
         self.conf = 0.95
-        if self.skill < 40:
-            self.conf = 0.75
+        step=(0.95-0.5)/6
+        if self.skill >= 40:
+            self.conf = 0.5+ (100 - self.skill)//6 *step
+        print("skill: ", self.skill, self.conf)
 
         self.map_points_is_sand = {}
         self.sand_traps = [sympy_poly_to_shapely(sympy_poly) for sympy_poly in sand_traps]
