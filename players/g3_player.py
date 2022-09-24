@@ -277,9 +277,6 @@ class Player:
         print('Converting map the Shapely Polygon')
         self.shapely_map = shapely.geometry.Polygon(golf_map.vertices)
         self.shapely_sand_traps = [shapely.geometry.Polygon(st.vertices) for st in sand_traps]
-
-        print('Splitting map into regions')
-        self.centroids, self.centroids_dict = split_polygon(self.shapely_map, self.shapely_sand_traps, 50)
         self.all_sandtraps = shapely.ops.unary_union(self.shapely_sand_traps)
 
         self.skill = skill
@@ -385,6 +382,9 @@ class Player:
             # Add adjacent points to heap
             reachable_points, goal_dists = self.numpy_adjacent_and_dist(next_p, conf,
                                                                         is_sand_centroid(self.centroids_dict, next_p))
+            
+            print(reachable_points)
+
             for i in range(len(reachable_points)):
                 candidate_point = tuple(reachable_points[i])
                 goal_dist = goal_dists[i]
@@ -432,6 +432,9 @@ class Player:
         Returns:
             Tuple[float, float]: Return a tuple of distance and angle in radians to play the shot
         """
+
+        print("IN PLAY FUNCTION") 
+        
         if self.np_map_points is None:
             gx, gy = float(target.x), float(target.y)
             self._initialize_map_points((gx, gy), golf_map, sand_traps)
