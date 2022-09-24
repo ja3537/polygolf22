@@ -1,3 +1,4 @@
+from xmlrpc.client import boolean
 import numpy as np
 import pandas as pd
 import sympy
@@ -87,7 +88,7 @@ def sympy_poly_to_shapely(sympy_poly: Polygon) -> ShapelyPolygon:
     return ShapelyPolygon(v)
 
 
-def is_sand_any(all_sandtraps, current_point):
+def is_sand_any(all_sandtraps, current_point)-> boolean:
     """Helper function to check whether the current point is within a sandtrap post-factum after the shot"""
     if all_sandtraps.contains(current_point):
         return True
@@ -95,7 +96,7 @@ def is_sand_any(all_sandtraps, current_point):
         return False
 
 
-def is_sand_centroid(centroids_dict, current_point):
+def is_sand_centroid(centroids_dict, current_point) -> boolean:
     """Helper function to check whether the given centroid is in a sandtrap region before considering a shot"""
     if centroids_dict[current_point][1] == 's':
         return True
@@ -258,7 +259,7 @@ def split_polygon(golf_map: sympy.Polygon, sand_traps: List[shapely.geometry.Pol
     for region in regions:
         plt.plot(*region.exterior.xy)
     plt.gca().invert_yaxis()
-    plt.savefig(map_name + '_voronoi_plot')
+    plt.savefig("voronoi_images/" + map_name + '_voronoi_plot')
     ## write the map data into the system
     with open(path, 'wb') as handle:
         pickle.dump([centroids, centroids_dict], handle, protocol=pickle.HIGHEST_PROTOCOL)
