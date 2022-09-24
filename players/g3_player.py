@@ -210,6 +210,9 @@ def split_polygon(golf_map: sympy.Polygon, sand_traps: List[shapely.geometry.Pol
     onlyfiles = [f for f in listdir(path) if isfile(join(path, f))]
     print("\n".join (onlyfiles))
     map_name = input("what is the current voronoi map? ")
+    if map_name == "":
+        print("empty user input, going for the default map")
+        map_name = "simple_with_sandtraps"
     path += "/" + map_name
     map_path = pathlib.Path(path)
     if map_path.is_file():
