@@ -207,7 +207,7 @@ def split_polygon(golf_map: sympy.Polygon, sand_traps: List[shapely.geometry.Pol
 
     # Naively insert holes into the given map where there are sand traps
     print("here are all the voronoi maps created:")
-    path = "voronoi_plots"
+    path = "precomp/Group 3"
     onlyfiles = [f for f in listdir(path) if isfile(join(path, f))]
     print("\n".join (onlyfiles))
     map_name = input("what is the current voronoi map? ")
