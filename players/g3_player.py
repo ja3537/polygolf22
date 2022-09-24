@@ -255,6 +255,7 @@ def split_polygon(golf_map: sympy.Polygon, sand_traps: List[shapely.geometry.Pol
     plt.scatter([r.centroid.x for r in regions], [r.centroid.y for r in regions], color='red')
     for region in regions:
         plt.plot(*region.exterior.xy)
+    plt.gca().invert_yaxis()
     plt.savefig(map_name + '_voronoi_plot')
     ## write the map data into the system
     with open(path, 'wb') as handle:
