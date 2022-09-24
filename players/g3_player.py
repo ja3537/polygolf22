@@ -69,29 +69,6 @@ def splash_zone(distance: float, angle: float, conf: float, skill: int, current_
     return np.concatenate((current_point, top_arc, current_point))
 
 
-def poly_to_points(poly: ShapelyPolygon) -> Iterator[Tuple[float, float]]:
-    x_min, y_min = float('inf'), float('inf')
-    x_max, y_max = float('-inf'), float('-inf')
-    for point in list(poly.exterior.coords):
-        x = float(point[0])
-        y = float(point[1])
-        x_min = min(x, x_min)
-        x_max = max(x, x_max)
-        y_min = min(y, y_min)
-        y_max = max(y, y_max)
-    x_step = X_STEP
-    y_step = Y_STEP
-
-    x_current = x_min
-    y_current = y_min
-    while x_current < x_max:
-        while y_current < y_max:
-            yield float(x_current), float(y_current)
-            y_current += y_step
-        y_current = y_min
-        x_current += x_step
-
-
 def sympy_poly_to_mpl(sympy_poly: Polygon) -> Path:
     """Helper function to convert sympy Polygon to matplotlib Path object"""
     v = sympy_poly.vertices
@@ -399,7 +376,6 @@ class Player:
         # self.mpl_poly = sympy_poly_to_mpl(golf_map)
         # self.shapely_poly = sympy_poly_to_shapely(golf_map)
         self.shapely_poly = golf_map
-        #pp = list(poly_to_points(golf_map))
         pp = self.centroids
         for point in pp:
             # Use matplotlib here because it's faster than shapely for this calculation...
@@ -497,12 +473,3 @@ def test_splash_zone_within_polygon():
     player = Player(50, 0xdeadbeef, None)
     assert player.splash_zone_within_polygon(current_point, inside_target_point, poly, 0.8)
     assert not player.splash_zone_within_polygon(current_point, outside_target_point, poly, 0.8)
-
-
-def test_poly_to_points():
-    poly = Polygon((0,0), (0, 10), (10, 10), (10, 0))
-    points = set(poly_to_points(poly))
-    for x in range(1, 10):
-        for y in range(1, 10):
-            assert (x,y) in points
-    assert len(points) == 81
