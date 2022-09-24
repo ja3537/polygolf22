@@ -333,6 +333,9 @@ class Player:
     def _max_ddist_st_ppf(self, conf: float):
         return self.max_ddist_st.ppf(1.0 - conf)
 
+    def add_point_to_centroids_dict(self, point: Tuple[float, float]):
+        self.centroids_dict[point] = [None, 's' if is_sand_any(self.all_sandtraps, shapely.geometry.Point(point)) else 'g']
+
     # TODO: change for sandtrap support - testing method, not important
     def reachable_point(self, current_point: Tuple[float, float], target_point: Tuple[float, float], conf: float) -> bool:
         """Determine whether the point is reachable with confidence [conf] based on our player's skill"""
@@ -359,14 +362,12 @@ class Player:
         angle = np.arctan2(float(ty) - float(cy), float(tx) - float(cx))
         splash_zone_poly_points = splash_zone(float(distance), float(angle), float(conf), self.skill, current_point,
                                               is_sand_any(self.all_sandtraps, shapely.geometry.Point(current_point)),
-                                              is_sand_centroid(self.centroids_dict, shapely.geometry.Point(target_point)))
+                                              is_sand_any(self.all_sandtraps, shapely.geometry.Point(target_point)))
         return self.shapely_poly.contains(ShapelyPolygon(splash_zone_poly_points))
 
     def numpy_adjacent_and_dist(self, point: Tuple[float, float], conf: float, is_sand: bool):
         cloc_distances = cdist(self.np_map_points, np.array([np.array(point)]), 'euclidean')
         cloc_distances = cloc_distances.flatten()
-        print(cloc_distances)
-        print(self._max_ddist_ppf(conf))
         distance_mask = cloc_distances <= (self._max_ddist_ppf(conf) if not is_sand else self._max_ddist_st_ppf(conf))
 
         reachable_points = self.np_map_points[distance_mask]
@@ -397,7 +398,6 @@ class Player:
             visited.add(next_p)
 
             if np.linalg.norm(np.array(self.goal) - np.array(next_p)) <= 5.4 / 100.0:
-                print("Within bounds of goal")
                 # All we care about is the next point
                 # TODO: We need to check if the path length is <= 10, because if it isn't we probably need to
                 #  reduce the conf and try again for a shorter path.
@@ -409,9 +409,6 @@ class Player:
             reachable_points, goal_dists = self.numpy_adjacent_and_dist(next_p, conf,
                                                                         is_sand_centroid(self.centroids_dict, next_p))
            
-            print("REACHABLE POINTS")
-            print(reachable_points)
-
             for i in range(len(reachable_points)):
                 candidate_point = tuple(reachable_points[i])
                 goal_dist = goal_dists[i]
@@ -443,12 +440,6 @@ class Player:
         self.np_goal_dist = cdist(self.np_map_points, np.array([np.array(self.goal)]), 'euclidean')
         self.np_goal_dist = self.np_goal_dist.flatten()
         
-        print('NP MAP POINTS')
-        print(self.np_map_points)
-
-        print('NP GOAL DIST')
-        print(self.np_goal_dist)
-
     def play(self, score: int, golf_map: sympy.Polygon, target: sympy.geometry.Point2D, sand_traps, curr_loc: sympy.geometry.Point2D, prev_loc: sympy.geometry.Point2D, prev_landing_point: sympy.geometry.Point2D, prev_admissible: bool) -> Tuple[float, float]:
         """Function which based n current game state returns the distance and angle, the shot must be played 
 
@@ -478,7 +469,8 @@ class Player:
         target_point = None
         confidence = self.conf
         cl = float(curr_loc.x), float(curr_loc.y)
-        print(f"current location: {curr_loc.x}, {curr_loc.y}")
+        self.add_point_to_centroids_dict(cl)
+        print(f"current location: {cl[0]}, {cl[1]}")
         
         while target_point is None:
             if confidence <= 0.0:
@@ -502,7 +494,7 @@ class Player:
                 max_offset = roll_distance
                 offset = 0
                 prev_target = target_point
-                while offset < max_offset and self.splash_zone_within_polygon(tuple(current_point), target_point, confidence):
+                while offset < max_offset and self.splash_zone_within_polygon(tuple(current_point), tuple(target_point), confidence):
                     offset += 1
                     dist = original_dist - offset
                     prev_target = target_point
