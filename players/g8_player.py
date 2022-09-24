@@ -473,28 +473,33 @@ class Player:
 
         # fixup target
         current_point = np.array(tuple(curr_loc)).astype(float)
+        original_dist = np.linalg.norm(np.array(target_point) - current_point)
         if tuple(target_point) == self.goal:
-            original_dist = np.linalg.norm(np.array(target_point) - current_point)
             v = np.array(target_point) - current_point
             # Unit vector pointing from current to target
             u = v / original_dist
+            in_sand = self.point_in_sandtrap_mpl(current_point)
             if original_dist >= 20.0:
                 roll_distance = original_dist * 0.1
                 max_offset = roll_distance
                 offset = 0
                 prev_target = target_point
-                while offset < max_offset and self.splash_zone_within_polygon(tuple(current_point), target_point, confidence):
+                while offset < max_offset * .5 and self.splash_zone_within_polygon(tuple(current_point), target_point, confidence):
                     offset += 1
                     dist = original_dist - offset
                     prev_target = target_point
                     target_point = current_point + u * dist
                 target_point = prev_target
-
+            elif original_dist < 20 and in_sand == False:
+                target_point = current_point + u * (original_dist * 1.5)
+                
         cx, cy = current_point
         tx, ty = target_point
         angle = np.arctan2(ty - cy, tx - cx)
 
         rv = curr_loc.distance(Point2D(target_point, evaluate=False)), angle
+        if original_dist < 20 and in_sand == False:
+            rv = 19.9, angle
         self.prev_rv = rv
         return rv
 
