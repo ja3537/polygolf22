@@ -6,14 +6,15 @@ import shapely.geometry, shapely.ops
 import sklearn.cluster
 import logging
 import matplotlib.pyplot as plt
-
+import pathlib
 from math import floor
 import os
 import pickle
 import functools
 import heapq
 from scipy import stats as scipy_stats
-
+from os import listdir
+from os.path import isfile, join
 from typing import Tuple, Iterator, List, Union
 from sympy.geometry import Polygon, Point2D
 from matplotlib.path import Path
@@ -182,7 +183,8 @@ def create_vornoi_regions(map: sympy.Polygon, region_num: int, point_spacing: fl
             flattened_regions.append(region)
 
     return flattened_regions
-
+      
+          
 
 def split_polygon(golf_map: sympy.Polygon, sand_traps: List[shapely.geometry.Polygon], region_num: int, goal,
                   all_sandtraps) -> List[shapely.geometry.Polygon]:
@@ -203,6 +205,18 @@ def split_polygon(golf_map: sympy.Polygon, sand_traps: List[shapely.geometry.Pol
     """
 
     # Naively insert holes into the given map where there are sand traps
+    print("here are all the voronoi maps created:")
+    path = "voronoi_plots"
+    onlyfiles = [f for f in listdir(path) if isfile(join(path, f))]
+    print("\n".join (onlyfiles))
+    map_name = input("what is the current voronoi map? ")
+    path += "/" + map_name
+    map_path = pathlib.Path(path)
+    if map_path.is_file():
+        #read the voroni from the pickle file 
+        with open(map_path, 'rb') as f:
+                l =  pickle.load(f)
+                return l
     golf_map_with_holes = shapely.geometry.Polygon(golf_map.exterior.coords, [list(st.exterior.coords) for st in sand_traps])
 
     regions = create_vornoi_regions(golf_map_with_holes, region_num, 0.5)
@@ -238,8 +252,10 @@ def split_polygon(golf_map: sympy.Polygon, sand_traps: List[shapely.geometry.Pol
     plt.scatter([r.centroid.x for r in regions], [r.centroid.y for r in regions], color='red')
     for region in regions:
         plt.plot(*region.exterior.xy)
-    plt.savefig('voronoi_plot')
-
+    plt.savefig(map_name + '_voronoi_plot')
+    ## write the map data into the system
+    with open(path, 'wb') as handle:
+        pickle.dump([centroids, centroids_dict], handle, protocol=pickle.HIGHEST_PROTOCOL)
     return [centroids, centroids_dict]
 
 class Player:
