@@ -186,7 +186,7 @@ def create_vornoi_regions(map: sympy.Polygon, region_num: int, point_spacing: fl
       
           
 
-def split_polygon(golf_map: sympy.Polygon, sand_traps: List[shapely.geometry.Polygon], region_num: int, goal,
+def split_polygon(golf_map: sympy.Polygon, sand_traps: List[shapely.geometry.Polygon], region_num: int, start, goal,
                   all_sandtraps) -> List[shapely.geometry.Polygon]:
     """ Split a given Golf Map into regions of roughly equal size.
     Based on an algorithm described by Paul Ramsey: http://blog.cleverelephant.ca/2018/06/polygon-splitting.html
@@ -244,8 +244,10 @@ def split_polygon(golf_map: sympy.Polygon, sand_traps: List[shapely.geometry.Pol
     # add all regions together and prepare returnables
     regions.extend(st_regions)
     centroids_dict.update({(region.centroid.x, region.centroid.y): [region, 's'] for region in st_regions})
-    reg_type = 's' if is_sand_any(all_sandtraps, shapely.geometry.Point(goal)) else 'g'
-    centroids_dict[goal] = [None, reg_type]
+
+    centroids_dict[start] = [None, 's' if is_sand_any(all_sandtraps, shapely.geometry.Point(start)) else 'g']
+    centroids_dict[goal] = [None, 's' if is_sand_any(all_sandtraps, shapely.geometry.Point(goal)) else 'g']
+
     centroids = [(region.centroid.x, region.centroid.y) for region in regions] + [goal]
 
     # Plot the random points, cluster centers, and voronoi regions
@@ -305,9 +307,10 @@ class Player:
         self.np_map_points = None
         self.mpl_poly = None
         self.shapely_poly = None
+        self.start = float(start.x), float(start.y)
         self.goal = float(target.x), float(target.y)
         self.prev_rv = None
-        self.centroids, self.centroids_dict = split_polygon(self.shapely_map, self.shapely_sand_traps, 50, self.goal,
+        self.centroids, self.centroids_dict = split_polygon(self.shapely_map, self.shapely_sand_traps, 50, self.start, self.goal,
                                                             self.all_sandtraps)
 
         # Cached data
@@ -355,13 +358,15 @@ class Player:
         tx, ty = target_point
         angle = np.arctan2(float(ty) - float(cy), float(tx) - float(cx))
         splash_zone_poly_points = splash_zone(float(distance), float(angle), float(conf), self.skill, current_point,
-                                              is_sand_any(self.all_sandtraps, current_point),
-                                              is_sand_centroid(self.centroids_dict, target_point))
+                                              is_sand_any(self.all_sandtraps, shapely.geometry.Point(current_point)),
+                                              is_sand_centroid(self.centroids_dict, shapely.geometry.Point(target_point)))
         return self.shapely_poly.contains(ShapelyPolygon(splash_zone_poly_points))
 
     def numpy_adjacent_and_dist(self, point: Tuple[float, float], conf: float, is_sand: bool):
         cloc_distances = cdist(self.np_map_points, np.array([np.array(point)]), 'euclidean')
         cloc_distances = cloc_distances.flatten()
+        print(cloc_distances)
+        print(self._max_ddist_ppf(conf))
         distance_mask = cloc_distances <= (self._max_ddist_ppf(conf) if not is_sand else self._max_ddist_st_ppf(conf))
 
         reachable_points = self.np_map_points[distance_mask]
@@ -371,7 +376,7 @@ class Player:
 
     def next_target(self, curr_loc: Tuple[float, float], goal: Point2D, conf: float) -> Union[None, Tuple[float, float]]:
         point_goal = float(goal.x), float(goal.y)
-        heap = [ScoredPoint(curr_loc, point_goal, 0.0)]
+        heap = [ScoredPoint(curr_loc, point_goal, is_sand_centroid(self.centroids_dict, curr_loc), 0.0)]
         start_point = heap[0].point
         # Used to cache the best cost and avoid adding useless points to the heap
         best_cost = {tuple(curr_loc): 0.0}
@@ -392,6 +397,7 @@ class Player:
             visited.add(next_p)
 
             if np.linalg.norm(np.array(self.goal) - np.array(next_p)) <= 5.4 / 100.0:
+                print("Within bounds of goal")
                 # All we care about is the next point
                 # TODO: We need to check if the path length is <= 10, because if it isn't we probably need to
                 #  reduce the conf and try again for a shorter path.
@@ -402,7 +408,8 @@ class Player:
             # Add adjacent points to heap
             reachable_points, goal_dists = self.numpy_adjacent_and_dist(next_p, conf,
                                                                         is_sand_centroid(self.centroids_dict, next_p))
-            
+           
+            print("REACHABLE POINTS")
             print(reachable_points)
 
             for i in range(len(reachable_points)):
@@ -421,9 +428,9 @@ class Player:
         return None
 
     def _initialize_map_points(self, goal: Tuple[float, float], golf_map: Polygon, sand_traps):
+        print('initializing map points')
         # Storing the points as numpy array
-        np_map_points = [goal]
-        map_points = [goal]
+        np_map_points = []
         self.mpl_poly = sympy_poly_to_mpl(golf_map)
         self.shapely_poly = sympy_poly_to_shapely(golf_map)
         pp = self.centroids
@@ -432,10 +439,15 @@ class Player:
             x, y = point
             np_map_points.append(np.array([x, y]))
 
-        # self.map_points = np.array(map_points)
         self.np_map_points = np.array(np_map_points)
         self.np_goal_dist = cdist(self.np_map_points, np.array([np.array(self.goal)]), 'euclidean')
         self.np_goal_dist = self.np_goal_dist.flatten()
+        
+        print('NP MAP POINTS')
+        print(self.np_map_points)
+
+        print('NP GOAL DIST')
+        print(self.np_goal_dist)
 
     def play(self, score: int, golf_map: sympy.Polygon, target: sympy.geometry.Point2D, sand_traps, curr_loc: sympy.geometry.Point2D, prev_loc: sympy.geometry.Point2D, prev_landing_point: sympy.geometry.Point2D, prev_admissible: bool) -> Tuple[float, float]:
         """Function which based n current game state returns the distance and angle, the shot must be played 
@@ -466,12 +478,16 @@ class Player:
         target_point = None
         confidence = self.conf
         cl = float(curr_loc.x), float(curr_loc.y)
+        print(f"current location: {curr_loc.x}, {curr_loc.y}")
+        
         while target_point is None:
-            # if confidence <= 0.0:
-            #     return None
+            if confidence <= 0.0:
+                return None
 
-            # print(f"searching with {confidence} confidence")
+            print(f"searching with {confidence} confidence")
             target_point = self.next_target(cl, target, confidence)
+            print(f"found target point: {target_point}")
+
             confidence -= 0.05
 
         # fixup target
