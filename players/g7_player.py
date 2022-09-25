@@ -1,21 +1,21 @@
 import functools
 import heapq
 import logging
-import os
-import pickle
-from typing import Iterator, List, Tuple, Union
+# import os
+# import pickle
+from typing import Iterator, Tuple, Union  # List
 
 from matplotlib.path import Path
 import numpy as np
-import scipy
+# import scipy
 from scipy import stats as scipy_stats
 from scipy.spatial.distance import cdist
 from shapely.geometry import Point, Polygon as ShapelyPolygon
 import sympy
-from sympy import Triangle
+from sympy import Triangle, atan2
 from sympy.geometry import Point2D, Polygon
 
-STEP = 10.0  # chunk size
+STEP = 5.0  # chunk size
 DIST = scipy_stats.norm(0, 1)
 
 
@@ -30,7 +30,9 @@ def polygon_to_points(golf_map: sympy.Polygon) -> Iterator[Tuple[float, float]]:
     points on a lattice with distance STEP. We ignore the edges of the map
     where there is only water.
     """
-    x_min, y_min, x_max, y_max = float('inf'), float('inf'), float('-inf'), float('-inf')
+    x_min, y_min = float('inf'), float('inf')
+    x_max, y_max = float('-inf'), float('-inf')
+
     for point in golf_map.vertices:
         x, y = float(point.x), float(point.y)
         x_min = min(x, x_min)
@@ -87,7 +89,10 @@ def sympy_tri_to_mpl(sympy_tri: Triangle) -> Path:
     return Path(vert_list, closed=True)
 
 
-def spread_points(current_point, angles: np.array, distance, reverse) -> np.array:
+def spread_points(current_point,
+                  angles: np.array,
+                  distance,
+                  reverse) -> np.array:
     curr_x, curr_y = current_point
     if reverse:
         angles = np.flip(angles)
@@ -213,9 +218,9 @@ class Player:
         self.poly_shapely = []
         self.prev_rv = None
 
-        max_distance = 200 + self.skill
-        self.max_ddist = scipy_stats.norm(max_distance, max_distance / self.skill)
-        self.max_ddist_sand = scipy_stats.norm(max_distance / 2, 2 * max_distance / self.skill)
+        self.max_distance = 200 + self.skill
+        self.max_ddist = scipy_stats.norm(self.max_distance, self.max_distance / self.skill)
+        self.max_ddist_sand = scipy_stats.norm(self.max_distance / 2, 2 * self.max_distance / self.skill)
 
 # # Group 9 code needed for precompute() ################################
 # self.rows, self.columns = None, None
@@ -357,9 +362,14 @@ class Player:
 
         return np.linalg.norm(current_point - target_point) <= self._max_ddist_ppf(conf)
 
-    def is_splash_zone_within_polygon(self, current_point: Tuple[float, float], target_point: Tuple[float, float], conf: float) -> bool:
-        if type(current_point) == Point2D: current_point = tuple(Point2D)
-        if type(target_point) == Point2D: target_point = tuple(Point2D)
+    def is_splash_zone_within_polygon(self,
+                                      current_point: Tuple[float, float],
+                                      target_point: Tuple[float, float],
+                                      conf: float) -> bool:
+        if type(current_point) == Point2D:
+            current_point = tuple(Point2D)
+        if type(target_point) == Point2D:
+            target_point = tuple(Point2D)
 
         distance = np.linalg.norm(np.array(current_point).astype(float) - np.array(target_point).astype(float))
         cx, cy = float(current_point[0]), float(current_point[1])
@@ -432,6 +442,20 @@ class Player:
                     prev_target = target_point
                     target_point = current_point + u * dist
                 target_point = prev_target
+            elif original_dist < 20.0:
+                # Within goal -> Taken from G9_2021
+                # s = Point(curr_loc.x, curr_loc.y)
+                # t = Point(target.x, target.y)
+                # if s.distance(t) < 20:
+                #     angle = atan2(target.y - curr_loc.y,target.x- curr_loc.x)
+                #     distance = s.distance(t)
+                #     return (distance, angle)
+                cx, cy = current_point
+                tx, ty = target_point
+                angle = np.arctan2(ty - cy, tx - cx)
+                rv = curr_loc.distance(Point2D(target_point, evaluate=False)), angle
+                self.prev_rv = rv
+                return rv
 
         cx, cy = current_point
         tx, ty = target_point
