@@ -39,8 +39,10 @@ def result_point(distance: float, angle: float, current_point: Tuple[float, floa
 
 def spread_points(current_point, angles: np.array, distance, reverse) -> np.array:
     curr_x, curr_y = current_point
+
     if reverse:
         angles = np.flip(angles)
+
     xs = np.cos(angles) * distance + curr_x
     ys = np.sin(angles) * distance + curr_y
     return np.column_stack((xs, ys))
@@ -57,7 +59,7 @@ def splash_zone(distance: float, angle: float, conf: float, skill: int, current_
         angles = np.vectorize(standard_ppf)(conf_points) * (1/(2*skill)) + angle
     scale = 1.1
     if distance <= 20 and not current_point_in_sand:
-        scale = 1.0
+        scale = 1.1
     max_distance = distances[-1]*scale
     top_arc = spread_points(current_point, angles, max_distance, False)
 
@@ -220,10 +222,10 @@ class Player:
         self.max_sand_ddist = scipy_stats.norm(max_dist/2, 2 * max_dist / self.skill)
 
         # Conf level
-        self.conf = 0.95
-        step=(0.95-0.5)/6
+        self.conf = 0.6
+        step=(0.8-0.6)/6
         if self.skill >= 40:
-            self.conf = 0.5+ (100 - self.skill)//6 *step
+             self.conf = 0.6+ (100 - self.skill)//6 *step
         print("skill: ", self.skill, self.conf)
 
         self.map_points_is_sand = {}
