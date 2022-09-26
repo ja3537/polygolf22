@@ -5,6 +5,7 @@ import functools
 import sympy
 import logging
 import heapq
+import time
 from scipy import stats as scipy_stats
 from typing import Tuple
 
@@ -17,8 +18,8 @@ from scipy.spatial.distance import cdist
 
 # Cached distribution
 DIST = scipy_stats.norm(0, 1)
-X_STEP = 5.0
-Y_STEP = 5.0
+X_STEP = 3.0
+Y_STEP = 3.0
 NEARBY_DIST = 100
 
 
@@ -162,8 +163,10 @@ class Player:
         self.goal = None
         self.visited = set()
         self.new_visited = set()
-        self.mode = 'a_star'
+        self.mode = 'a_star'  # 'greedy'
         self.prev_rv = None
+
+        start = time.time()
 
         # Cached data
         max_dist = 200 + self.skill
@@ -180,6 +183,9 @@ class Player:
 
         self.num_trials = 1000
         self.prev_loc = None
+
+        end = time.time()
+        print("Execution time - Player Init:", (end - start) * 10 ** 3, "ms")
 
     def _initialize_map_points(self, goal: Tuple[float, float], golf_map: Polygon, sand_traps):
         # Storing the points as numpy array
@@ -365,6 +371,8 @@ class Player:
         Returns:
             Tuple[float, float]: Return a tuple of distance and angle in radians to play the shot
         """
+        start = time.time()
+
         if self.np_map_points is None:
             gx, gy = float(target.x), float(target.y)
             self.goal = float(target.x), float(target.y)
@@ -410,6 +418,10 @@ class Player:
 
         rv = curr_loc.distance(Point2D(target_point, evaluate=False)), angle
         self.prev_rv = rv
+
+        end = time.time()
+        print("Execution time - play():", (end - start) * 10 ** 3, "ms")
+
         return rv
 
 
