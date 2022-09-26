@@ -1,10 +1,8 @@
-from xmlrpc.client import boolean
 import numpy as np
 import pandas as pd
 import sympy
 import random
 import shapely.geometry, shapely.ops
-import sklearn.cluster
 import logging
 import matplotlib.pyplot as plt
 import pathlib
@@ -384,7 +382,7 @@ class Player:
         self.np_goal_dist = self.np_goal_dist.flatten()
 
 
-    def is_point_in_sand(self, current_point: Tuple[float, float])-> boolean:
+    def is_point_in_sand(self, current_point: Tuple[float, float])-> bool:
         """Helper function to check whether the current point is within a sandtrap post-factum after the shot"""
         return self.all_sandtraps.contains(shapely.geometry.Point(current_point))
         
