@@ -173,7 +173,7 @@ class Player:
         self.sand_nearby_ddist = scipy_stats.norm(NEARBY_DIST/2, NEARBY_DIST/self.skill*2)
 
         # Conf level
-        self.conf = 0.95
+        self.conf = 0.8
         if self.skill < 40:
             self.conf = 0.75
 
@@ -261,6 +261,7 @@ class Player:
 
         if not trapped:
             # check if there's sand blocking a putter shot
+            # NEEDS OPTIMIZATION (e.g., check after choosing a shot)
             putt_shot_indices = np.where(cloc_distances < 20)[0]
             for i in putt_shot_indices:
                 line = ShapelyLine([point, tuple(self.np_map_points[i])])
