@@ -164,6 +164,8 @@ class Player:
         self.mode = 'a_star'
         self.prev_rv = None
 
+        self.roll_into_sand = set()
+
         # Cached data
         max_dist = 200 + self.skill
         self.max_ddist = scipy_stats.norm(max_dist, max_dist/self.skill)
@@ -244,7 +246,7 @@ class Player:
     def numpy_adjacent_and_dist(self, point: Tuple[float, float], conf: float, mode='max', trapped=False):
         cloc_distances = cdist(self.np_map_points, np.array([np.array(point)]), 'euclidean')
         cloc_distances = cloc_distances.flatten()
-        if trapped:
+        if trapped or (point in self.roll_into_sand):
             if mode == 'max':
                 distance_mask = cloc_distances <= self._sand_max_ddist_ppf(conf)
             elif mode == 'nearby':
@@ -300,7 +302,7 @@ class Player:
         return None
 
     def next_target(self, curr_loc: Tuple[float, float], goal: Point2D, conf: float) -> Union[None, Tuple[float, float]]:
-        trapped = any([trap.contains_point(curr_loc) for trap in self.mpl_sand_polys])
+        #trapped = any([trap.contains_point(curr_loc) for trap in self.mpl_sand_polys])
         point_goal = float(goal.x), float(goal.y)
         heap = [ScoredPoint(curr_loc, point_goal, 0.0)]
         start_point = heap[0].point
@@ -316,9 +318,10 @@ class Player:
                 continue
             if next_sp.actual_cost > 10:
                 continue
+            trapped = any([trap.contains_point(next_p) for trap in self.mpl_sand_polys])
             if next_sp.actual_cost > 0:
-                target_trapped = any([trap.contains_point(next_p) for trap in self.mpl_sand_polys])
-                if not self.splash_zone_within_polygon(next_sp.previous.point, next_p, conf, target_trapped=target_trapped):
+                #trapped = any([trap.contains_point(next_p) for trap in self.mpl_sand_polys])
+                if not self.splash_zone_within_polygon(next_sp.previous.point, next_p, conf, target_trapped=trapped):
                     if next_p in best_cost:
                         del best_cost[next_p]
                     continue
@@ -349,6 +352,9 @@ class Player:
 
         # No path available
         return None
+
+    #def fix_up_rolling_in_sand(current_point, target_point):
+
 
     def play(self, score: int, golf_map: sympy.Polygon, target: sympy.geometry.Point2D, sand_traps: List[sympy.Polygon], curr_loc: sympy.geometry.Point2D, prev_loc: sympy.geometry.Point2D, prev_landing_point: sympy.geometry.Point2D, prev_admissible: bool) -> Tuple[float, float]:
         """Function which based n current game state returns the distance and angle, the shot must be played
@@ -384,6 +390,24 @@ class Player:
             #print(f"searching with {confidence} confidence")
             target_point = self.next_target_greedy(cl, target, confidence) if self.mode == 'greedy' else self.next_target(cl, target, confidence)
             confidence -= 0.05
+
+        # fix rolling into sand 
+        #target_point = self.fix_up_rolling_in_sand(tuple(curr_loc), tuple(target_point))
+        target_trapped = any([trap.contains_point(target_point) for trap in self.mpl_sand_polys])
+        if not target_trapped:
+            current_point = np.array(tuple(curr_loc)).astype(float)
+            distance = np.linalg.norm(np.array(target_point) - current_point)
+            cx, cy = curr_loc
+            tx, ty = target
+            angle = np.arctan2(float(ty) - float(cy), float(tx) - float(cx))
+            splash_zone_poly_points = splash_zone(float(distance), float(angle), confidence, self.skill, current_point, target_trapped=False)
+            shapely_splash_zone = ShapelyPolygon(splash_zone_poly_points)
+            for trap in self.shapely_sand_polys:
+                if trap.intersects(shapely_splash_zone):
+                    self.roll_into_sand.add(target_point)
+                    break
+            target_point = self.next_target_greedy(cl, target, confidence) if self.mode == 'greedy' else self.next_target(cl, target, confidence)
+
 
         # fixup target
         current_point = np.array(tuple(curr_loc)).astype(float)
