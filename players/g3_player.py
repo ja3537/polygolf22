@@ -435,12 +435,21 @@ class Player:
             u = v / original_dist
             if original_dist >= 20.0:
                 roll_distance = original_dist / 20
+                increment = 0.1
                 max_offset = roll_distance
                 offset = 0
+                
                 prev_target = target_point
-                while offset < max_offset and self.splash_zone_within_polygon(tuple(current_point), tuple(target_point), confidence) and not self.is_point_in_sand(target_point):
+                first_in_sand = True
+                while offset < max_offset and self.splash_zone_within_polygon(tuple(current_point), tuple(target_point), confidence):
+                    ##Changed how if we rolled into the sand trap the rolling distance decrease, and we increment with a smaller step
+                    if self.is_point_in_sand(target_point) and first_in_sand == True:
+                        max_offset = offset + 0.01
+                        increment = 0.001
+                        first_in_sand = False
+               
                     ##prevent the ball from backing into a sandtrap
-                    offset += 1
+                    offset += increment
                     dist = original_dist - offset
                     prev_target = target_point
                     target_point = current_point + u * dist
