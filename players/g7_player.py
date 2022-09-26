@@ -460,7 +460,7 @@ class Player:
                 cx, cy = current_point
                 tx, ty = target_point
                 angle = np.arctan2(ty - cy, tx - cx)
-                rv = min(dist1(target_point, current_point) / (1 - (1 / self.skill * 3)), constants.min_putter_dist)+1, angle
+                rv = min((dist1(target_point, current_point) / (1 - (1 / self.skill * 3)))+1, constants.min_putter_dist)+1, angle
                 self.prev_rv = rv
                 return rv
             
