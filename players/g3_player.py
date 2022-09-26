@@ -19,6 +19,7 @@ from sympy.geometry import Polygon, Point2D
 from matplotlib.path import Path
 from shapely.geometry import Polygon as ShapelyPolygon, Point as ShapelyPoint
 from scipy.spatial.distance import cdist
+from sklearn.cluster import KMeans
 
 
 # Cached distribution
@@ -139,7 +140,7 @@ def create_vornoi_regions(map: sympy.Polygon, region_num: int, point_spacing: fl
 
     # Cluster the random points into groups using kmeans
     points_df = pd.DataFrame([[pt.x, pt.y] for pt in points], columns=['x', 'y'])
-    kmeans = sklearn.cluster.KMeans(n_clusters=region_num, init='k-means++').fit(points_df)
+    kmeans = KMeans(n_clusters=region_num, init='k-means++').fit(points_df)
 
     # Generate a voronoi diagram from the centers of the generated regions
     center_points = shapely.geometry.MultiPoint(kmeans.cluster_centers_)
