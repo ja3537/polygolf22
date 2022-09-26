@@ -259,6 +259,9 @@ class Player:
         if type(target_point) == Point2D:
             target_point = tuple(Point2D)
 
+        if target_point == self.goal:
+            return True
+
         this_in_sand = self.is_in_sand(current_point)
 
         distance = np.linalg.norm(np.array(current_point).astype(float) - np.array(target_point).astype(float)) * (2 if this_in_sand else 1)
@@ -491,6 +494,9 @@ class Player:
                     # closest_point = min([intersection.distance(self.shapely_goal) for intersection in intersections])
                     
                     # target_point = min(some threshold, target_point distance to goal/2?)
+            else:
+                target_point = target_point + u * (5.4/100)
+
 
         #sand trap in back
         #   we do normal fix up
