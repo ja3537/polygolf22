@@ -438,7 +438,8 @@ class Player:
                 max_offset = roll_distance
                 offset = 0
                 prev_target = target_point
-                while offset < max_offset and self.splash_zone_within_polygon(tuple(current_point), tuple(target_point), confidence):
+                while offset < max_offset and self.splash_zone_within_polygon(tuple(current_point), tuple(target_point), confidence) and not self.is_point_in_sand(target_point):
+                    ##prevent the ball from backing into a sandtrap
                     offset += 1
                     dist = original_dist - offset
                     prev_target = target_point
