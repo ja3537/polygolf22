@@ -16,19 +16,15 @@ import heapq
 from scipy import stats as scipy_stats
 from os import listdir
 from os.path import isfile, join
-from typing import Tuple, Iterator, List, Union
+from typing import Tuple, Iterator, List, Union, Dict
 from sympy.geometry import Polygon, Point2D
 from matplotlib.path import Path
 from shapely.geometry import Polygon as ShapelyPolygon, Point as ShapelyPoint
 from scipy.spatial.distance import cdist
 
 
-POINTS_PER_REGION = 25
-
 # Cached distribution
 DIST = scipy_stats.norm(0, 1)
-X_STEP = 5.0
-Y_STEP = 5.0
 
 
 @functools.lru_cache()
@@ -86,22 +82,6 @@ def sympy_poly_to_shapely(sympy_poly: Polygon) -> ShapelyPolygon:
     v = sympy_poly.vertices
     v.append(v[0])
     return ShapelyPolygon(v)
-
-
-def is_sand_any(all_sandtraps, current_point)-> boolean:
-    """Helper function to check whether the current point is within a sandtrap post-factum after the shot"""
-    if all_sandtraps.contains(current_point):
-        return True
-    else:
-        return False
-
-
-def is_sand_centroid(centroids_dict, current_point) -> boolean:
-    """Helper function to check whether the given centroid is in a sandtrap region before considering a shot"""
-    if centroids_dict[current_point][1] == 's':
-        return True
-    else:
-        return False
 
 
 class ScoredPoint:
@@ -187,8 +167,7 @@ def create_vornoi_regions(map: sympy.Polygon, region_num: int, point_spacing: fl
       
           
 
-def split_polygon(golf_map: sympy.Polygon, sand_traps: List[shapely.geometry.Polygon], region_num: int, start, goal,
-                  all_sandtraps) -> List[shapely.geometry.Polygon]:
+def split_polygon(golf_map: sympy.Polygon, sand_traps: List[shapely.geometry.Polygon], region_num: int) -> Dict[Tuple[float, float], shapely.geometry.Polygon]:
     """ Split a given Golf Map into regions of roughly equal size.
     Based on an algorithm described by Paul Ramsey: http://blog.cleverelephant.ca/2018/06/polygon-splitting.html
 
@@ -198,11 +177,7 @@ def split_polygon(golf_map: sympy.Polygon, sand_traps: List[shapely.geometry.Pol
         regions (int): The number of roughly equal sized regions to split the map into
 
     Returns:
-        List [
-            List[(x,y)]: Returns a list of points representing centroids of polygons on the map
-            Dict[coord tuple => [shapely.geometry.Polygon, string 's'|'g']]  Returns a dict with polygons
-             and indication of whether or not the point is sand
-        ]
+        Dict[Tuple[float, float], shapely.geometry.Polygon]  Returns a dict with region centroid x/y tuples as keys and Shapely Polygons as values
     """
 
     # Naively insert holes into the given map where there are sand traps
@@ -228,8 +203,6 @@ def split_polygon(golf_map: sympy.Polygon, sand_traps: List[shapely.geometry.Pol
     # TODO Force a center on each sandtrap to support small sandtraps
     # TODO Use Polylabel to find the point furthest from edge to support concave traps
 
-    centroids_dict = {(region.centroid.x, region.centroid.y): [region, 'g'] for region in regions}
-
     # Find total and avg area
     avg_area_centroid = golf_map_with_holes.area/len(regions)
 
@@ -244,12 +217,7 @@ def split_polygon(golf_map: sympy.Polygon, sand_traps: List[shapely.geometry.Pol
 
     # add all regions together and prepare returnables
     regions.extend(st_regions)
-    centroids_dict.update({(region.centroid.x, region.centroid.y): [region, 's'] for region in st_regions})
-
-    centroids_dict[start] = [None, 's' if is_sand_any(all_sandtraps, shapely.geometry.Point(start)) else 'g']
-    centroids_dict[goal] = [None, 's' if is_sand_any(all_sandtraps, shapely.geometry.Point(goal)) else 'g']
-
-    centroids = [(region.centroid.x, region.centroid.y) for region in regions] + [goal]
+    centroids_dict = {(region.centroid.x, region.centroid.y): region for region in regions}
 
     # Plot the random points, cluster centers, and voronoi regions
     plt.figure(dpi=200)
@@ -262,8 +230,8 @@ def split_polygon(golf_map: sympy.Polygon, sand_traps: List[shapely.geometry.Pol
     plt.savefig("voronoi_images/" + map_name + '_voronoi_plot')
     ## write the map data into the system
     with open(path, 'wb') as handle:
-        pickle.dump([centroids, centroids_dict], handle, protocol=pickle.HIGHEST_PROTOCOL)
-    return [centroids, centroids_dict]
+        pickle.dump(centroids_dict, handle, protocol=pickle.HIGHEST_PROTOCOL)
+    return centroids_dict
 
 class Player:
     def __init__(self, skill: int, rng: np.random.Generator, logger: logging.Logger, golf_map: sympy.Polygon, start: sympy.geometry.Point2D, target: sympy.geometry.Point2D, sand_traps, map_path: str, precomp_dir: str) -> None:
@@ -311,8 +279,13 @@ class Player:
         self.start = float(start.x), float(start.y)
         self.goal = float(target.x), float(target.y)
         self.prev_rv = None
-        self.centroids, self.centroids_dict = split_polygon(self.shapely_map, self.shapely_sand_traps, 50, self.start, self.goal,
-                                                            self.all_sandtraps)
+        self.centroids_dict = split_polygon(self.shapely_map, self.shapely_sand_traps, 50)
+        self.centroids = list(self.centroids_dict.keys())
+
+        # Add start and end points to centroids and centroids_dict
+        self.centroids_dict[self.start] = None
+        self.centroids_dict[self.goal] = None
+        self.centroids.append(self.goal)
 
         # Cached data
         max_dist = 200 + self.skill
@@ -333,9 +306,6 @@ class Player:
     @functools.lru_cache()
     def _max_ddist_st_ppf(self, conf: float):
         return self.max_ddist_st.ppf(1.0 - conf)
-
-    def add_point_to_centroids_dict(self, point: Tuple[float, float]):
-        self.centroids_dict[point] = [None, 's' if is_sand_any(self.all_sandtraps, shapely.geometry.Point(point)) else 'g']
 
     # TODO: change for sandtrap support - testing method, not important
     def reachable_point(self, current_point: Tuple[float, float], target_point: Tuple[float, float], conf: float) -> bool:
@@ -362,8 +332,8 @@ class Player:
         tx, ty = target_point
         angle = np.arctan2(float(ty) - float(cy), float(tx) - float(cx))
         splash_zone_poly_points = splash_zone(float(distance), float(angle), float(conf), self.skill, current_point,
-                                              is_sand_any(self.all_sandtraps, shapely.geometry.Point(current_point)),
-                                              is_sand_any(self.all_sandtraps, shapely.geometry.Point(target_point)))
+                                              self.is_point_in_sand(current_point),
+                                              self.is_point_in_sand(target_point))
         return self.shapely_poly.contains(ShapelyPolygon(splash_zone_poly_points))
 
     def numpy_adjacent_and_dist(self, point: Tuple[float, float], conf: float, is_sand: bool):
@@ -378,7 +348,7 @@ class Player:
 
     def next_target(self, curr_loc: Tuple[float, float], goal: Point2D, conf: float) -> Union[None, Tuple[float, float]]:
         point_goal = float(goal.x), float(goal.y)
-        heap = [ScoredPoint(curr_loc, point_goal, is_sand_centroid(self.centroids_dict, curr_loc), 0.0)]
+        heap = [ScoredPoint(curr_loc, point_goal, self.is_point_in_sand(curr_loc), 0.0)]
         start_point = heap[0].point
         # Used to cache the best cost and avoid adding useless points to the heap
         best_cost = {tuple(curr_loc): 0.0}
@@ -407,13 +377,12 @@ class Player:
                 return next_sp.point
             
             # Add adjacent points to heap
-            reachable_points, goal_dists = self.numpy_adjacent_and_dist(next_p, conf,
-                                                                        is_sand_centroid(self.centroids_dict, next_p))
+            reachable_points, goal_dists = self.numpy_adjacent_and_dist(next_p, conf, self.is_point_in_sand(next_p))
            
             for i in range(len(reachable_points)):
                 candidate_point = tuple(reachable_points[i])
                 goal_dist = goal_dists[i]
-                new_point = ScoredPoint(candidate_point, point_goal, is_sand_centroid(self.centroids_dict, candidate_point),
+                new_point = ScoredPoint(candidate_point, point_goal, self.is_point_in_sand(candidate_point),
                                         next_sp.actual_cost + 1, next_sp, goal_dist=goal_dist, skill=self.skill)
                 if candidate_point not in best_cost or best_cost[candidate_point] > new_point.actual_cost:
                     points_checked += 1
@@ -440,6 +409,11 @@ class Player:
         self.np_map_points = np.array(np_map_points)
         self.np_goal_dist = cdist(self.np_map_points, np.array([np.array(self.goal)]), 'euclidean')
         self.np_goal_dist = self.np_goal_dist.flatten()
+
+
+    def is_point_in_sand(self, current_point: Tuple[float, float])-> boolean:
+        """Helper function to check whether the current point is within a sandtrap post-factum after the shot"""
+        return self.all_sandtraps.contains(shapely.geometry.Point(current_point))
         
     def play(self, score: int, golf_map: sympy.Polygon, target: sympy.geometry.Point2D, sand_traps, curr_loc: sympy.geometry.Point2D, prev_loc: sympy.geometry.Point2D, prev_landing_point: sympy.geometry.Point2D, prev_admissible: bool) -> Tuple[float, float]:
         """Function which based n current game state returns the distance and angle, the shot must be played 
@@ -470,7 +444,6 @@ class Player:
         target_point = None
         confidence = self.conf
         cl = float(curr_loc.x), float(curr_loc.y)
-        self.add_point_to_centroids_dict(cl)
         print(f"current location: {cl[0]}, {cl[1]}")
         
         while target_point is None:
