@@ -6,13 +6,12 @@ import sympy
 import logging
 import heapq
 from scipy import stats as scipy_stats
-from typing import Tuple
 
 
 from typing import Tuple, Iterator, List, Union
 from sympy.geometry import Polygon, Point2D
 from matplotlib.path import Path
-from shapely.geometry import Polygon as ShapelyPolygon, Point as ShapelyPoint
+from shapely.geometry import Polygon as ShapelyPolygon, Point as ShapelyPoint, LineString as ShapelyLine
 from scipy.spatial.distance import cdist
 
 # Cached distribution
@@ -228,18 +227,6 @@ class Player:
     def _sand_nearby_ddist_ppf(self, conf: float):
         return self.sand_nearby_ddist.ppf(1.0 - conf)
 
-    def reachable_point(self, current_point: Tuple[float, float], target_point: Tuple[float, float], conf: float) -> bool:
-        """Determine whether the point is reachable with confidence [conf] based on our player's skill"""
-        if type(current_point) == Point2D:
-            current_point = tuple(current_point)
-        if type(target_point) == Point2D:
-            target_point = tuple(target_point)
-
-        current_point = np.array(current_point).astype(float)
-        target_point = np.array(target_point).astype(float)
-
-        return np.linalg.norm(current_point - target_point) <= self._max_ddist_ppf(conf)
-    
     def splash_zone_within_polygon(self, current_point: Tuple[float, float], target_point: Tuple[float, float], conf: float, target_trapped=False) -> bool:
         if type(current_point) == Point2D:
             current_point = tuple(Point2D)
@@ -267,6 +254,18 @@ class Player:
                 distance_mask = cloc_distances <= self._max_ddist_ppf(conf)
             elif mode == 'nearby':
                 distance_mask = cloc_distances <= self._nearby_ddist_ppf(conf)
+
+        reachable_points = self.np_map_points[distance_mask]
+        goal_distances = self.np_goal_dist[distance_mask]
+        sand_penalties = self.np_sand_penalty[distance_mask]
+
+        if not trapped:
+            # check if there's sand blocking a putter shot
+            putt_shot_indices = np.where(cloc_distances < 20)[0]
+            for i in putt_shot_indices:
+                line = ShapelyLine([point, tuple(self.np_map_points[i])])
+                if any([line.intersects(trap) for trap in self.shapely_sand_polys]):
+                    distance_mask[i] = False
 
         reachable_points = self.np_map_points[distance_mask]
         goal_distances = self.np_goal_dist[distance_mask]
@@ -350,7 +349,7 @@ class Player:
         # No path available
         return None
 
-    def play(self, score: int, golf_map: sympy.Polygon, target: sympy.geometry.Point2D, sand_traps: list[sympy.Polygon], curr_loc: sympy.geometry.Point2D, prev_loc: sympy.geometry.Point2D, prev_landing_point: sympy.geometry.Point2D, prev_admissible: bool) -> Tuple[float, float]:
+    def play(self, score: int, golf_map: sympy.Polygon, target: sympy.geometry.Point2D, sand_traps: List[sympy.Polygon], curr_loc: sympy.geometry.Point2D, prev_loc: sympy.geometry.Point2D, prev_landing_point: sympy.geometry.Point2D, prev_admissible: bool) -> Tuple[float, float]:
         """Function which based n current game state returns the distance and angle, the shot must be played
 
         Args:
@@ -387,14 +386,14 @@ class Player:
 
         # fixup target
         current_point = np.array(tuple(curr_loc)).astype(float)
+        trapped = any([trap.contains_point(current_point) for trap in self.mpl_sand_polys])
         if tuple(target_point) == self.goal:
             original_dist = np.linalg.norm(np.array(target_point) - current_point)
             v = np.array(target_point) - current_point
             # Unit vector pointing from current to target
             u = v / original_dist
             if original_dist >= 20.0:
-                roll_distance = original_dist / 20
-                max_offset = roll_distance
+                max_offset = original_dist / 20
                 offset = 0
                 prev_target = target_point
                 while offset < max_offset and self.splash_zone_within_polygon(tuple(current_point), target_point, confidence):
@@ -402,7 +401,10 @@ class Player:
                     dist = original_dist - offset
                     prev_target = target_point
                     target_point = current_point + u * dist
-                target_point = prev_target
+                target_point = prev_target + u * 2 # shoot further in hope that the ball would roll into the goal
+            elif (not trapped) and self.skill >= 70:
+                target_point += u
+
 
         cx, cy = current_point
         tx, ty = target_point
