@@ -25,7 +25,7 @@ angle_quant = 36
 # Utility functions
 # =================
 #
-def sympy_poly_to_shapely(sympy_poly: sympy.geometry.Polygon) -> ShapelyPolygon:
+def sympy_poly_to_shapely(sympy_poly: sympy.Polygon) -> ShapelyPolygon:
     """Helper function to convert sympy Polygon to shapely Polygon object"""
     v = list(sympy_poly.vertices)
     v.append(v[0])
@@ -176,7 +176,7 @@ class Player:
         golf_map: sympy.Polygon,
         start: sympy.geometry.Point2D,
         target: sympy.geometry.Point2D,
-        sand_traps: List[sympy.geometry.Point2D],
+        sand_traps: list[sympy.Polygon],
         map_path: str,
         precomp_dir: str,
     ) -> None:
