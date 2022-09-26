@@ -43,9 +43,8 @@ def spread_points(current_point, angles: np.array, distance, reverse) -> np.arra
     return np.column_stack((xs, ys))
 
 
-def splash_zone(distance: float, angle: float, conf: float, skill: int, current_point: Tuple[float, float], in_sandtrap: bool) -> np.array:
+def splash_zone(distance: float, angle: float, conf: float, skill: int, current_point: Tuple[float, float], in_sandtrap: bool, target_in_sand: bool) -> np.array:
     conf_points = np.linspace(1 - conf, conf, 5)
-    scale = 1.1
     if in_sandtrap:
         # the distance rating is halved, and the standard deviations for the angle and distance distributions are doubled
         distances = np.vectorize(standard_ppf)(
@@ -58,24 +57,27 @@ def splash_zone(distance: float, angle: float, conf: float, skill: int, current_
         angles = np.vectorize(standard_ppf)(
             conf_points) * (1/(2*skill)) + angle
 
-    if distance <= 20 or in_sandtrap:
-        # If a ball lands in a sand trap, it does not roll
+    scale = 1.1
+    putter_shot = distance < 20 and not in_sandtrap
+
+    # A ball will not roll in two cases:
+    #   1. player makes a putter shot
+    # . 2. ball lands in a sand trap
+    if putter_shot or target_in_sand:
         scale = 1.0
-    if distance <= 20 and in_sandtrap:
-        # If you're in a sand trap and happen to be closer than 20m to the hole
-        # the simulator does not make you use a putter
-        scale = 1.1
 
     max_distance = distances[-1]*scale
     top_arc = spread_points(current_point, angles, max_distance, False)
 
-    if distance > 20 or (distance <= 20 and in_sandtrap):
+    if putter_shot:
+        # return a fan region, instead of splash zone, this is so that we can
+        # check whether the putter shot would pass by water 
+        current_point = np.array([current_point])
+        return np.concatenate((current_point, top_arc, current_point))
+    else:
         min_distance = distances[0]
         bottom_arc = spread_points(current_point, angles, min_distance, True)
         return np.concatenate((top_arc, bottom_arc, np.array([top_arc[0]])))
-
-    current_point = np.array([current_point])
-    return np.concatenate((current_point, top_arc, current_point))
 
 
 def poly_to_points(poly: Polygon) -> Iterator[Tuple[float, float]]:
@@ -112,7 +114,7 @@ def sympy_poly_to_mpl(sympy_poly: Polygon) -> Path:
 
 def sympy_poly_to_shapely(sympy_poly: Polygon) -> ShapelyPolygon:
     """Helper function to convert sympy Polygon to shapely Polygon object"""
-    v = sympy_poly.vertices
+    v = list(sympy_poly.vertices)
     v.append(v[0])
     return ShapelyPolygon(v)
 
@@ -211,6 +213,7 @@ class ScoredPoint:
 
 class Player:
     AVOID_SAND_PENALTY = 0.1
+    PUTTER_OVER_SAND_PENALTY = 1
 
     def __init__(self, skill: int, rng: np.random.Generator, logger: logging.Logger, golf_map: sympy.Polygon, start: sympy.geometry.Point2D, target: sympy.geometry.Point2D, sand_traps: List[sympy.Polygon], map_path: str, precomp_dir: str) -> None:
         """Initialise the player with given skill.
@@ -277,7 +280,7 @@ class Player:
     def _max_sandtrap_ddist_ppf(self, conf:float):
         return self.max_sandtrap_ddist.ppf(1.0-conf)
 
-    def splash_zone(self, current_point: Tuple[float, float], target_point: Tuple[float, float], conf: float) -> np.array:
+    def splash_zone_within_polygon(self, current_point: Tuple[float, float], target_point: Tuple[float, float], conf: float) -> [bool, bool]:
         if type(current_point) == Point2D:
             current_point = tuple(Point2D)
 
@@ -286,22 +289,28 @@ class Player:
 
         distance = np.linalg.norm(np.array(current_point).astype(
             float) - np.array(target_point).astype(float))
+
         cx, cy = current_point
         tx, ty = target_point
         angle = np.arctan2(float(ty) - float(cy), float(tx) - float(cx))
         in_sandtrap = is_in_sand_trap(
             current_point, self.sand_trap_matlab_polys, cache=self.map_points_in_sand_trap)
-        return splash_zone(float(distance), float(
-            angle), float(conf), self.skill, current_point, in_sandtrap)
-    
-    def splash_zone_within_polygon(self, splash_zone_poly_points: np.array) -> bool:
-        return self.shapely_poly.contains(ShapelyPolygon(splash_zone_poly_points))
 
-    def splash_zone_within_sand(self, splash_zone_poly_points: np.array) -> bool:
+        target_sandtrap = is_in_sand_trap(
+            target_point, self.sand_trap_matlab_polys, cache=self.map_points_in_sand_trap)
+
+        splash_zone_poly_points = splash_zone(float(distance), float(
+            angle), float(conf), self.skill, current_point, in_sandtrap, target_sandtrap)
+
+        splash_in_poly = self.shapely_poly.contains(ShapelyPolygon(splash_zone_poly_points))
+
+        splash_in_sand = False
         for sand_trap in self.sand_trap_shapely_polys:
             if sand_trap.intersects(ShapelyPolygon(splash_zone_poly_points)):
-                return True
-        return False
+                splash_in_sand = True
+                break
+
+        return [splash_in_poly, splash_in_sand]
 
     def numpy_adjacent_and_dist(self, point: Tuple[float, float], conf: float, in_sandtrap: bool):
         cloc_distances = cdist(self.np_map_points, np.array(
@@ -349,24 +358,49 @@ class Player:
                 return next_sp.point
 
             # Add adjacent points to heap
-            next_p_after_rolling = next_p if next_sp.previous is None else roll(next_sp.previous.point, next_p, constants.extra_roll)
+            shot_distance = 0 if next_sp.previous is None else np.linalg.norm(np.array(next_p) - np.array(next_sp.previous.point))
+            start_point_in_sand = False if next_sp.previous is None else is_in_sand_trap(next_sp.previous.point, self.sand_trap_matlab_polys, cache=self.map_points_in_sand_trap)
+            target_point_in_sand = is_in_sand_trap(next_p, self.sand_trap_matlab_polys, cache=self.map_points_in_sand_trap)
+
+            if next_sp.previous is None:
+                # target point is the starting point, no rolling
+                next_p_after_rolling = next_p
+            elif target_point_in_sand:
+                # target point is in a sand trap, no rolling
+                next_p_after_rolling = next_p
+            elif not start_point_in_sand and shot_distance < 20:
+                # putter shot, no rolling
+                next_p_after_rolling = next_p
+            else:
+                next_p_after_rolling = roll(next_sp.previous.point, next_p, constants.extra_roll)
+
             reachable_points, goal_dists = self.numpy_adjacent_and_dist(
                 next_p_after_rolling, conf, is_in_sand_trap(next_p_after_rolling, self.sand_trap_matlab_polys, cache=self.map_points_in_sand_trap))
 
+
             for i in range(len(reachable_points)):
+                # shooting from @next_p -> @candidate_point
                 candidate_point = tuple(reachable_points[i])
+                shot_distance = np.linalg.norm(np.array(candidate_point) - np.array(next_p))
+                start_point_in_sand = is_in_sand_trap(next_p, self.sand_trap_matlab_polys, cache=self.map_points_in_sand_trap)
+                putter_shot = shot_distance < 20 and not start_point_in_sand
+                new_actual_cost = actual_cost
+
                 if candidate_point not in best_cost or best_cost[candidate_point] > new_point.actual_cost:
                     points_checked += 1
 
                     sand_penalty = 0
-                    splash_zone = self.splash_zone(next_p, candidate_point, conf)
-                    if not self.splash_zone_within_polygon(splash_zone):
+                    splash_in_poly, splash_in_sand = self.splash_zone_within_polygon(next_p, candidate_point, conf)
+
+                    if not splash_in_poly:
                         continue
-                    if self.splash_zone_within_sand(splash_zone):
+                    if splash_in_sand and not is_in_sand_trap(candidate_point, self.sand_trap_matlab_polys, cache=self.map_points_in_sand_trap):
                         sand_penalty = self.AVOID_SAND_PENALTY
+                    if splash_in_sand and putter_shot:
+                        new_actual_cost += self.PUTTER_OVER_SAND_PENALTY
 
                     goal_dist = goal_dists[i]
-                    new_point = ScoredPoint(candidate_point, point_goal, actual_cost + 1, next_sp,
+                    new_point = ScoredPoint(candidate_point, point_goal, new_actual_cost + 1, next_sp,
                                             goal_dist=goal_dist, skill=self.skill, sand_penalty=sand_penalty)
 
                     best_cost[new_point.point] = new_point.actual_cost
@@ -442,13 +476,12 @@ class Player:
             v = np.array(target_point) - current_point
             # Unit vector pointing from current to target
             u = v / original_dist
-            if original_dist >= 20.0:
+            if original_dist >= 20.0 or is_in_sand_trap(tuple(current_point), self.sand_trap_matlab_polys, cache=self.map_points_in_sand_trap):
                 roll_distance = original_dist / 20
                 max_offset = roll_distance
                 offset = 0
                 prev_target = target_point
-                splash_zone = self.splash_zone(tuple(current_point), target_point, confidence)
-                while offset < max_offset and self.splash_zone_within_polygon(splash_zone):
+                while offset < max_offset and self.splash_zone_within_polygon(tuple(current_point), tuple(target_point), confidence)[0]:
                     offset += 1
                     dist = original_dist - offset
                     prev_target = target_point
