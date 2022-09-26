@@ -32,14 +32,8 @@ def standard_ppf(conf: float) -> float:
     return DIST.ppf(conf)
 
 
-def result_point(distance: float, angle: float, current_point: Tuple[float, float]) -> Tuple[float, float]:
-    cx, cy = current_point
-    nx = cx + distance * np.cos(angle)
-    ny = cy + distance * np.sin(angle)
-    return nx, ny
 
-
-def spread_points(current_point, angles: np.array, distance, reverse) -> np.array:
+def spread_points(current_point: Tuple[float, float], angles: np.array, distance: float, reverse: bool) -> np.array:
     curr_x, curr_y = current_point
     if reverse:
         angles = np.flip(angles)
@@ -136,12 +130,13 @@ class ScoredPoint:
 def create_vornoi_regions(map: sympy.Polygon, region_num: int, point_spacing: float) -> List[shapely.geometry.Polygon]:
     points = []
     min_x, min_y, max_x, max_y = map.bounds
-    # Generate a dense grid of points (0.5m spacing) within the bounds of a given map
-    # Produces more homogenous regions with centroids almost exactly in the middle
+
+    # Generate a dense grid of points within the bounds of a given map to produce homogenous regions
+    # with centroids almost exactly in the middle when later clustering with kmeans
     for x in np.arange(min_x, max_x, point_spacing):
         for y in np.arange(min_y, max_y, point_spacing):
             pt = shapely.geometry.Point(x, y)
-            if map.contains(pt):  # and not combined_buffer_zones.contains(pt):
+            if map.contains(pt):
                 points.append(pt)
 
     # Cluster the random points into groups using kmeans
@@ -166,7 +161,6 @@ def create_vornoi_regions(map: sympy.Polygon, region_num: int, point_spacing: fl
     return flattened_regions
       
           
-
 def split_polygon(golf_map: sympy.Polygon, sand_traps: List[shapely.geometry.Polygon], region_num: int) -> Dict[Tuple[float, float], shapely.geometry.Polygon]:
     """ Split a given Golf Map into regions of roughly equal size.
     Based on an algorithm described by Paul Ramsey: http://blog.cleverelephant.ca/2018/06/polygon-splitting.html
@@ -180,22 +174,6 @@ def split_polygon(golf_map: sympy.Polygon, sand_traps: List[shapely.geometry.Pol
         Dict[Tuple[float, float], shapely.geometry.Polygon]  Returns a dict with region centroid x/y tuples as keys and Shapely Polygons as values
     """
 
-    # Naively insert holes into the given map where there are sand traps
-    print("here are all the voronoi maps created:")
-    path = "precomp/Group 3"
-    onlyfiles = [f for f in listdir(path) if isfile(join(path, f))]
-    print("\n".join (onlyfiles))
-    map_name = input("what is the current voronoi map? ")
-    if map_name == "":
-        print("empty user input, going for the default map")
-        map_name = "simple_with_sandtraps"
-    path += "/" + map_name
-    map_path = pathlib.Path(path)
-    if map_path.is_file():
-        #read the voroni from the pickle file 
-        with open(map_path, 'rb') as f:
-                l =  pickle.load(f)
-                return l
     golf_map_with_holes = shapely.geometry.Polygon(golf_map.exterior.coords, [list(st.exterior.coords) for st in sand_traps])
 
     regions = create_vornoi_regions(golf_map_with_holes, region_num, 0.5)
@@ -219,18 +197,6 @@ def split_polygon(golf_map: sympy.Polygon, sand_traps: List[shapely.geometry.Pol
     regions.extend(st_regions)
     centroids_dict = {(region.centroid.x, region.centroid.y): region for region in regions}
 
-    # Plot the random points, cluster centers, and voronoi regions
-    plt.figure(dpi=200)
-    plt.axis('equal')
-    plt.plot(*golf_map_with_holes.exterior.xy)
-    plt.scatter([r.centroid.x for r in regions], [r.centroid.y for r in regions], color='red')
-    for region in regions:
-        plt.plot(*region.exterior.xy)
-    plt.gca().invert_yaxis()
-    plt.savefig("voronoi_images/" + map_name + '_voronoi_plot')
-    ## write the map data into the system
-    with open(path, 'wb') as handle:
-        pickle.dump(centroids_dict, handle, protocol=pickle.HIGHEST_PROTOCOL)
     return centroids_dict
 
 class Player:
@@ -247,28 +213,33 @@ class Player:
             map_path (str): File path to map
             precomp_dir (str): Directory path to store/load precomputation
         """
-        # # if depends on skill
-        # precomp_path = os.path.join(precomp_dir, "{}_skill-{}.pkl".format(map_path, skill))
-        # # if doesn't depend on skill
-        # precomp_path = os.path.join(precomp_dir, "{}.pkl".format(map_path))
-        
-        # # precompute check
-        # if os.path.isfile(precomp_path):
-        #     # Getting back the objects:
-        #     with open(precomp_path, "rb") as f:
-        #         self.obj0, self.obj1, self.obj2 = pickle.load(f)
-        # else:
-        #     # Compute objects to store
-        #     self.obj0, self.obj1, self.obj2 = _
 
-        #     # Dump the objects
-        #     with open(precomp_path, 'wb') as f:
-        #         pickle.dump([self.obj0, self.obj1, self.obj2], f)
-
-        print('Converting map the Shapely Polygon')
-        self.shapely_map = shapely.geometry.Polygon(golf_map.vertices)
-        self.shapely_sand_traps = [shapely.geometry.Polygon(st.vertices) for st in sand_traps]
-        self.all_sandtraps = shapely.ops.unary_union(self.shapely_sand_traps)
+        # Check if the map has been precomputed
+        precomp_path = os.path.join(precomp_dir, "{}.pkl".format(map_path))
+        if os.path.isfile(precomp_path):
+            with open(precomp_path, "rb") as f:
+                self.shapely_map, self.shapely_sand_traps, self.centroids_dict = pickle.load(f)
+        else:
+            # If no the map has not been precomputed, do so
+            self.shapely_map = shapely.geometry.Polygon(golf_map.vertices)
+            self.shapely_sand_traps = [shapely.geometry.Polygon(st.vertices) for st in sand_traps]
+            self.centroids_dict = split_polygon(self.shapely_map, self.shapely_sand_traps, 50)
+            
+            # Then dump the precomputation for the next run
+            with open(precomp_path, 'wb') as f:
+                pickle.dump([self.shapely_map, self.shapely_sand_traps, self.centroids_dict], f)
+            
+            # And save an image of the generated map
+            regions_image_path = os.path.join(precomp_dir, "{}-regions.jpg".format(map_path))
+            plt.figure(dpi=200)
+            plt.axis('equal')
+            plt.plot(*self.shapely_map.exterior.xy)
+            plt.scatter([r.centroid.x for r in self.centroids_dict.values()], [r.centroid.y for r in self.centroids_dict.values()], color='red')
+            for region in self.centroids_dict.values():
+                plt.plot(*region.exterior.xy)
+            plt.gca().invert_yaxis()
+            plt.savefig(regions_image_path)
+                
 
         self.skill = skill
         self.rng = rng
@@ -279,8 +250,9 @@ class Player:
         self.start = float(start.x), float(start.y)
         self.goal = float(target.x), float(target.y)
         self.prev_rv = None
-        self.centroids_dict = split_polygon(self.shapely_map, self.shapely_sand_traps, 50)
+        
         self.centroids = list(self.centroids_dict.keys())
+        self.all_sandtraps = shapely.ops.unary_union(self.shapely_sand_traps)
 
         # Add start and end points to centroids and centroids_dict
         self.centroids_dict[self.start] = None
@@ -298,6 +270,7 @@ class Player:
         self.conf = 0.95
         if self.skill < 40:
             self.conf = 0.75
+
 
     @functools.lru_cache()
     def _max_ddist_ppf(self, conf: float):
@@ -430,8 +403,6 @@ class Player:
         Returns:
             Tuple[float, float]: Return a tuple of distance and angle in radians to play the shot
         """
-
-        print("IN PLAY FUNCTION") 
         
         if self.np_map_points is None:
             gx, gy = float(target.x), float(target.y)
@@ -482,27 +453,3 @@ class Player:
         rv = curr_loc.distance(Point2D(target_point, evaluate=False)), angle
         self.prev_rv = rv
         return rv
-
-
-# === Unit Tests ===
-
-def test_reachable():
-    current_point = Point2D(0, 0, evaluate=False)
-    target_point = Point2D(0, 250, evaluate=False)
-    player = Player(50, 0xdeadbeef, None)
-    
-    assert not player.reachable_point(current_point, target_point, 0.80)
-
-
-def test_splash_zone_within_polygon():
-    poly = Polygon((0,0), (0, 300), (300, 300), (300, 0), evaluate=False)
-
-    current_point = Point2D(0, 0, evaluate=False)
-
-    # Just checking polygons inside and outside
-    inside_target_point = Point2D(150, 150, evaluate=False)
-    outside_target_point = Point2D(299, 100, evaluate=False)
-
-    player = Player(50, 0xdeadbeef, None)
-    assert player.splash_zone_within_polygon(current_point, inside_target_point, poly, 0.8)
-    assert not player.splash_zone_within_polygon(current_point, outside_target_point, poly, 0.8)
