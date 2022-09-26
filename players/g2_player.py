@@ -431,18 +431,6 @@ class Player:
             u = v / original_dist
 
             if original_dist >= 20.0 or self.current_shot_in_sand:
-
-                # find a distance such that
-                # distance < goal < distance + roll
-                # for the most part of that
-
-                # for a given distance,
-                # we know the min distance
-                # we know the max distance
-
-                # how much of from min to max satisfy the goal
-                # while loop starting aiming at the goal until percentage decreases
-
                 roll_distance = original_dist /  20
                 max_offset = roll_distance
                 offset = 0
@@ -453,7 +441,34 @@ class Player:
                     prev_target = target_point
                     target_point = current_point + u * dist
                 target_point = prev_target
+                # print(f"old target {np.linalg.norm(np.array(target_point) - current_point)*1.1*u + current_point}")
 
+
+                # find dist such that dist * 1.1 >= goal
+                # find dist such that it lands between dist and goal most of the time
+                # does this mean just the half way point??
+                # current_point + somedistance* 1.1 * u == self.goal
+                point_to_aim = self.goal - current_point
+                perfect_distance_for_rolling = np.array([point_to_aim[0]/(1.1*u[0]), point_to_aim[1]/(1.1*u[1])])
+                # print(f"perfect distance for rolling {perfect_distance_for_rolling}")
+                # find the distance between the current point and the perfect point
+                # print(f"1.1 of perfect dist landing spot {current_point + perfect_distance_for_rolling*(1.1*u)}")
+                perfect_landing_spot = current_point + perfect_distance_for_rolling*u
+
+                distance_from_land_to_goal = np.linalg.norm(self.goal - np.array(perfect_landing_spot))
+                # print(f"distance from land to goal {distance_from_land_to_goal}")
+                point_to_land = perfect_landing_spot + (u * distance_from_land_to_goal/2)
+                #check if point is good splash zone
+                max_tries = 0
+                while not self.splash_zone_within_polygon(tuple(current_point), point_to_land, confidence) and max_tries < 5:
+                    distance_to_offset = np.linalg.norm(self.goal - np.array(point_to_land))/2
+                    point_to_land += u * distance_to_offset
+                    max_tries += 1
+                
+                # print(f"new target = {np.linalg.norm(np.array(point_to_land) - current_point)*1.1*u + current_point}")
+                target_point = point_to_land
+ 
+                
                 line = ShapelyLineString([self.goal, target_point])
                 count = 0
                 while any(line.intersects(s) for s in self.sand_traps) and count < 3:
@@ -471,11 +486,16 @@ class Player:
                     distance = 20 
                 else:
                     conf = 0.95
-                    # angles = np.vectorize(standard_ppf)(conf_points) * (1/(2*skill)) + angle
+                    # TODO: angles = np.vectorize(standard_ppf)(conf_points) * (1/(2*skill)) + angle
 
-                    #min distance = original_dist
-                    # np.vectorize(standard_ppf)(conf_points) * (distance / self.skill) + distance = original_dist
+                    #min distance =  np.vectorize(standard_ppf)(1-conf)* (distance / self.skill)+ distance ??
+                    # np.vectorize(standard_ppf)(1-conf) * (distance / self.skill) + distance = original_dist
+                    # mindistance >= original_dist 
+                    # 95% of the time we hit at least original distance (aka goal)
                     distance = min(19.9999, original_dist / (np.vectorize(standard_ppf)(1-conf) * (1/self.skill) + 1))
+                    # print(current_point)
+                    # print(f"new point {current_point + u * distance}")
+                    # print(f"old point {self.goal + u * 0.54}")
                 target_point = current_point + u * distance
 
 
