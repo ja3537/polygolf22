@@ -150,3 +150,6 @@ maps/temp.json
 
 # Precomputation
 precomp/
+
+# Dummy map
+maps/g9/simpleMap.json

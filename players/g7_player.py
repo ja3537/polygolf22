@@ -1,21 +1,23 @@
 import functools
 import heapq
 import logging
-import os
-import pickle
-from typing import Iterator, List, Tuple, Union
+# import os
+# import pickle
+from typing import Iterator, Tuple, Union  # List
 
 from matplotlib.path import Path
 import numpy as np
-import scipy
+# import scipy
 from scipy import stats as scipy_stats
 from scipy.spatial.distance import cdist
 from shapely.geometry import Point, Polygon as ShapelyPolygon
 import sympy
-from sympy import Triangle
+from sympy import Triangle, atan2
 from sympy.geometry import Point2D, Polygon
+import constants
+import math
 
-STEP = 10.0  # chunk size
+STEP = 5.0  # chunk size
 DIST = scipy_stats.norm(0, 1)
 
 
@@ -23,6 +25,11 @@ DIST = scipy_stats.norm(0, 1)
 def standard_ppf(conf: float) -> float:
     return DIST.ppf(conf)
 
+def dist2(p1: Point, p2: Point) -> float:
+        return (p1[0] - p2[0]) ** 2 + (p1[1] - p2[1]) ** 2
+
+def dist1(p1: Point, p2: Point = Point(0, 0)) -> float:
+        return math.sqrt(dist2(p1, p2))
 
 def polygon_to_points(golf_map: sympy.Polygon) -> Iterator[Tuple[float, float]]:
     """
@@ -30,7 +37,9 @@ def polygon_to_points(golf_map: sympy.Polygon) -> Iterator[Tuple[float, float]]:
     points on a lattice with distance STEP. We ignore the edges of the map
     where there is only water.
     """
-    x_min, y_min, x_max, y_max = float('inf'), float('inf'), float('-inf'), float('-inf')
+    x_min, y_min = float('inf'), float('inf')
+    x_max, y_max = float('-inf'), float('-inf')
+
     for point in golf_map.vertices:
         x, y = float(point.x), float(point.y)
         x_min = min(x, x_min)
@@ -87,7 +96,10 @@ def sympy_tri_to_mpl(sympy_tri: Triangle) -> Path:
     return Path(vert_list, closed=True)
 
 
-def spread_points(current_point, angles: np.array, distance, reverse) -> np.array:
+def spread_points(current_point,
+                  angles: np.array,
+                  distance,
+                  reverse) -> np.array:
     curr_x, curr_y = current_point
     if reverse:
         angles = np.flip(angles)
@@ -120,7 +132,6 @@ def splash_zone(distance: float,
 
 class ScoredPoint:
     """Scored point class for use in A* search algorithm
-
     Building off of last years g2 player
     """
     def __init__(self,
@@ -187,7 +198,6 @@ class Player:
                  map_path: str,
                  precomp_dir: str) -> None:
         """Initialise the player with given skill.
-
         Args:
         skill (int): skill of your player
         rng (np.random.Generator): np random number generator, use for same player behavior
@@ -213,9 +223,9 @@ class Player:
         self.poly_shapely = []
         self.prev_rv = None
 
-        max_distance = 200 + self.skill
-        self.max_ddist = scipy_stats.norm(max_distance, max_distance / self.skill)
-        self.max_ddist_sand = scipy_stats.norm(max_distance / 2, 2 * max_distance / self.skill)
+        self.max_distance = 200 + self.skill
+        self.max_ddist = scipy_stats.norm(self.max_distance, self.max_distance / self.skill)
+        self.max_ddist_sand = scipy_stats.norm(self.max_distance / 2, 2 * self.max_distance / self.skill)
 
 # # Group 9 code needed for precompute() ################################
 # self.rows, self.columns = None, None
@@ -357,11 +367,20 @@ class Player:
 
         return np.linalg.norm(current_point - target_point) <= self._max_ddist_ppf(conf)
 
-    def is_splash_zone_within_polygon(self, current_point: Tuple[float, float], target_point: Tuple[float, float], conf: float) -> bool:
-        if type(current_point) == Point2D: current_point = tuple(Point2D)
-        if type(target_point) == Point2D: target_point = tuple(Point2D)
+    def is_splash_zone_within_polygon(self,
+                                      current_point: Tuple[float, float],
+                                      target_point: Tuple[float, float],
+                                      conf: float) -> bool:
+        if type(current_point) == Point2D:
+            current_point = tuple(Point2D)
+        if type(target_point) == Point2D:
+            target_point = tuple(Point2D)
 
-        distance = np.linalg.norm(np.array(current_point).astype(float) - np.array(target_point).astype(float))
+        is_in_sandtrap = any([sandtrap.contains_point(target_point) for sandtrap in self.mpl_poly_trap])
+        if is_in_sandtrap:
+            distance = np.linalg.norm(np.array(current_point).astype(float) - np.array(target_point).astype(float))
+        else: 
+            distance = (np.linalg.norm(np.array(current_point).astype(float) - np.array(target_point).astype(float)) * 1.08)
         cx, cy = float(current_point[0]), float(current_point[1])
         tx, ty = float(target_point[0]), float(target_point[1])
         angle = np.arctan2(ty - cy, tx - cx)
@@ -381,7 +400,6 @@ class Player:
              prev_landing_point: Point2D,
              prev_admissible: bool) -> Tuple[float, float]:
         """Function which based on current game state returns the distance and angle, the shot must be played
-
         Args:
         score (int): Your total score including current turn
         golf_map (sympy.Polygon): Golf Map polygon
@@ -390,7 +408,6 @@ class Player:
         prev_loc (Point2D): Your previous location. If you haven't played previously then None
         prev_landing_point (Point2D): Your previous shot landing location. If you haven't played previously then None
         prev_admissible (bool): Boolean stating if your previous shot was within the polygon limits. If you haven't played previously then None
-
         Returns:
         Tuple[float, float]: Return a tuple of distance and angle in radians to play the shot
         """
@@ -432,7 +449,21 @@ class Player:
                     prev_target = target_point
                     target_point = current_point + u * dist
                 target_point = prev_target
-
+            elif original_dist < 20.0:
+                # Within goal -> Taken from G9_2021
+                # s = Point(curr_loc.x, curr_loc.y)
+                # t = Point(target.x, target.y)
+                # if s.distance(t) < 20:
+                #     angle = atan2(target.y - curr_loc.y,target.x- curr_loc.x)
+                #     distance = s.distance(t)
+                #     return (distance, angle)
+                cx, cy = current_point
+                tx, ty = target_point
+                angle = np.arctan2(ty - cy, tx - cx)
+                rv = min(dist1(target_point, current_point) / (1 - (1 / self.skill * 3)), constants.min_putter_dist)+1, angle
+                self.prev_rv = rv
+                return rv
+            
         cx, cy = current_point
         tx, ty = target_point
         angle = np.arctan2(ty - cy, tx - cx)
@@ -440,58 +471,3 @@ class Player:
         rv = curr_loc.distance(Point2D(target_point, evaluate=False)), angle
         self.prev_rv = rv
         return rv
-
-    # Functions from group 9 that are needed for precompute ###################
-    # def get_center(self, row: int, column: int) -> Point:
-    #     x = self.zero_center.x + column * STEP
-    #     y = self.zero_center.y + row * STEP
-    #     return Point(x, y)
-
-    # def get_row_col(self, x, y):
-    #     row = round((self.zero_center.y - y) / STEP)
-    #     column = round((x - self.zero_center.x) / STEP)
-    #     return row, column
-
-    # """
-    # def get_row(self, row):
-    #     return round((self.zero_center.y - row) / STEP)
-    # def get_column(self, column):
-    #     return round((column - self.zero_center.x) / STEP)
-    # """
-
-    # def get_corners(self, row: int, column: int):
-    #     center = self.get_center(row, column)
-    #     offset = STEP / 2
-    #     x, y = center.x, center.y
-    #     upper_left = Point(x - offset, y + offset)
-    #     upper_right = Point(x + offset, y + offset)
-    #     lower_left = Point(x - offset, y - offset)
-    #     lower_right = Point(x + offset, y - offset)
-
-    #     return [upper_left, upper_right, lower_left, lower_right]
-
-    # def precompute(self) -> None:
-    #     """Precomputing path."""
-    #     self.dmap = np.zeros((self.rows, self.columns), dtype=np.int8)
-
-    #     for row in range(self.rows):
-    #         for column in range(self.columns):
-    #             water, land, sandtrap = 0, 0, 0
-    #             corners = self.get_corners(row, column)
-
-    #             for point in corners:
-    #                 if self.is_point_in_sand(point):
-    #                     sandtrap += 1
-    #                 elif self.quick_map.contains(point):
-    #                     land += 1
-    #                 else:
-    #                     water += 1
-
-    #             if land == 4:
-    #                 self.dmap[row, column] = 1
-    #             elif water == 4:
-    #                 self.dmap[row, column] = 0
-    #             else:
-    #                 self.dmap[row, column] = 2
-
-    # End #####################################################################

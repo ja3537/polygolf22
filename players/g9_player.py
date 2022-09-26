@@ -17,8 +17,8 @@ from scipy.spatial.distance import cdist
 # Cached distribution
 DIST = scipy_stats.norm(0, 1)
 SAND_DIST = scipy_stats.norm(0, 2)
-X_STEP = 5
-Y_STEP = 5
+X_STEP = 10
+Y_STEP = 10
 
 
 @functools.lru_cache()
@@ -39,8 +39,10 @@ def result_point(distance: float, angle: float, current_point: Tuple[float, floa
 
 def spread_points(current_point, angles: np.array, distance, reverse) -> np.array:
     curr_x, curr_y = current_point
+
     if reverse:
         angles = np.flip(angles)
+
     xs = np.cos(angles) * distance + curr_x
     ys = np.sin(angles) * distance + curr_y
     return np.column_stack((xs, ys))
@@ -57,7 +59,7 @@ def splash_zone(distance: float, angle: float, conf: float, skill: int, current_
         angles = np.vectorize(standard_ppf)(conf_points) * (1/(2*skill)) + angle
     scale = 1.1
     if distance <= 20 and not current_point_in_sand:
-        scale = 1.0
+        scale = 1.1
     max_distance = distances[-1]*scale
     top_arc = spread_points(current_point, angles, max_distance, False)
 
@@ -164,6 +166,19 @@ class ScoredPoint:
 
 class Player:
     def __init__(self, skill: int, rng: np.random.Generator, logger: logging.Logger, golf_map: sympy.Polygon, start: sympy.geometry.Point2D, target: sympy.geometry.Point2D, sand_traps: List[sympy.Polygon], map_path: str, precomp_dir: str) -> None:
+        # 1. Create a new List[sympy.Polygon]
+            # sand = []
+        # 2. Idea: Expand the sandtrap by a very small margin in order to avoid pusher problem, inward or outward.
+        # Case 1: if a piece of sandtrap is encircled by green, we expand the perimeter outward
+            # implementation: probably using some function in sympy.Polygon expand or increase perimeter
+
+        # 3. Case 2: if a piece of land is surrounded by sandtrap, we reduce the perimeter
+        # of the land by increasing the size of the sandtrap inward by a small margin. 
+            # implementation: probably by checking whether a land Polygon lies within a sandtrap, then we increase
+            # the size of the sandtrap inward
+        # 4. assign the generated new list to sand_traps
+            # sand_traps = sand
+
         """Initialise the player with given skill.
         Args:
             skill (int): skill of your player
@@ -175,7 +190,23 @@ class Player:
             map_path (str): File path to map
             precomp_dir (str): Directory path to store/load precomputation
         """
+        # # if depends on skill
+        # precomp_path = os.path.join(precomp_dir, "{}_skill-{}.pkl".format(map_path, skill))
+        # # if doesn't depend on skill
+        # precomp_path = os.path.join(precomp_dir, "{}.pkl".format(map_path))
         
+        # # precompute check
+        # if os.path.isfile(precomp_path):
+        #     # Getting back the objects:
+        #     with open(precomp_path, "rb") as f:
+        #         self.obj0, self.obj1, self.obj2 = pickle.load(f)
+        # else:
+        #     # Compute objects to store
+        #     self.obj0, self.obj1, self.obj2 = _
+
+        #     # Dump the objects
+        #     with open(precomp_path, 'wb') as f:
+        #         pickle.dump([self.obj0, self.obj1, self.obj2], f)
         self.skill = skill
         self.rng = rng
         self.logger = logger
@@ -191,11 +222,13 @@ class Player:
         self.max_sand_ddist = scipy_stats.norm(max_dist/2, 2 * max_dist / self.skill)
 
         # Conf level
-        self.conf = 0.95
-        if self.skill < 40:
-            self.conf = 0.75
+        self.conf = 0.6
+        step=(0.8-0.6)/6
+        if self.skill >= 40:
+             self.conf = 0.6+ (100 - self.skill)//6 *step
+        print("skill: ", self.skill, self.conf)
 
-        self.sand_points = {}
+        self.map_points_is_sand = {}
         self.sand_traps = [sympy_poly_to_shapely(sympy_poly) for sympy_poly in sand_traps]
 
         self.current_shot_in_sand = None
@@ -225,9 +258,7 @@ class Player:
         current_point = np.array(current_point).astype(float)
         target_point = np.array(target_point).astype(float)
 
-        if self.in_sand_trap(current_point):
-            return np.linalg.norm(current_point - target_point) <= self._max__sand_ddist_ppf(conf)
-        return np.linalg.norm(current_point - target_point) <= self._max_ddist_ppf(conf)
+        return np.linalg.norm(current_point - target_point) <= self._max_ddist_ppf(conf) if not self.is_in_sand(current_point) else self._max__sand_ddist_ppf(conf)
     
     def splash_zone_within_polygon(self, current_point: Tuple[float, float], target_point: Tuple[float, float], conf: float) -> bool:
         if type(current_point) == Point2D:
@@ -236,7 +267,7 @@ class Player:
         if type(target_point) == Point2D:
             target_point = tuple(Point2D)
 
-        this_in_sand = self.in_sand_trap(current_point)
+        this_in_sand = self.is_in_sand(current_point)
 
         distance = np.linalg.norm(np.array(current_point).astype(float) - np.array(target_point).astype(float)) * (2 if this_in_sand else 1)
         cx, cy = current_point
@@ -246,7 +277,7 @@ class Player:
         shapely_splash_zone_poly_points = ShapelyPolygon(splash_zone_poly_points)
 
         if self.shapely_poly.contains(shapely_splash_zone_poly_points):
-            if not self.in_sand_trap(target_point):
+            if not self.is_in_sand(target_point):
                 total_overlap = sum([shapely_splash_zone_poly_points.intersection(sand_trap).area for sand_trap in self.sand_traps if shapely_splash_zone_poly_points.intersects(self.shapely_poly)])
                 return total_overlap/shapely_splash_zone_poly_points.area <= 1 - conf
             return True
@@ -255,10 +286,7 @@ class Player:
     def numpy_adjacent_and_dist(self, point: Tuple[float, float], conf: float):
         cloc_distances = cdist(self.np_map_points, np.array([np.array(point)]), 'euclidean')
         cloc_distances = cloc_distances.flatten()
-        
-        distance_mask = cloc_distances <= self._max_ddist_ppf(conf)
-        if self.in_sand_trap(point):
-            distance_mask = cloc_distances <= self._max__sand_ddist_ppf(conf)
+        distance_mask = cloc_distances <= (self._max_ddist_ppf(conf) if not self.is_in_sand(point) else self._max__sand_ddist_ppf(conf))
 
         reachable_points = self.np_map_points[distance_mask]
         goal_distances = self.np_goal_dist[distance_mask]
@@ -267,7 +295,7 @@ class Player:
 
     def next_target(self, curr_loc: Tuple[float, float], goal: Point2D, conf: float) -> Union[None, Tuple[float, float]]:
         point_goal = float(goal.x), float(goal.y)
-        heap = [ScoredPoint(curr_loc, point_goal, 0.0, in_sand=self.in_sand_trap(curr_loc))]
+        heap = [ScoredPoint(curr_loc, point_goal, 0.0, in_sand=self.is_in_sand(curr_loc))]
         start_point = heap[0].point
         # Used to cache the best cost and avoid adding useless points to the heap
         best_cost = {tuple(curr_loc): 0.0}
@@ -301,7 +329,7 @@ class Player:
                 candidate_point = tuple(reachable_points[i])
                 goal_dist = goal_dists[i]
                 new_point = ScoredPoint(candidate_point, point_goal, next_sp.actual_cost + 1, next_sp,
-                                        goal_dist=goal_dist, skill=self.skill, in_sand=self.in_sand_trap(candidate_point))
+                                        goal_dist=goal_dist, skill=self.skill, in_sand=self.is_in_sand(candidate_point))
                 if candidate_point not in best_cost or best_cost[candidate_point] > new_point.actual_cost:
                     points_checked += 1
                     # if not self.splash_zone_within_polygon(new_point.previous.point, new_point.point, conf):
@@ -328,14 +356,13 @@ class Player:
         self.np_goal_dist = cdist(self.np_map_points, np.array([np.array(self.goal)]), 'euclidean')
         self.np_goal_dist = self.np_goal_dist.flatten()
 
-    def in_sand_trap(self, point: sympy.geometry.Point2D):
+    def is_in_sand(self, point: sympy.geometry.Point2D):
         if (type(point) == np.ndarray):
             point = Point2D(point[0], point[1])
-
-        if (point not in self.sand_points):
+        if (point not in self.map_points_is_sand):
             shapelyPoint = ShapelyPoint(point[0], point[1])
-            self.sand_points[point] = any(s.contains(shapelyPoint) for s in self.sand_traps)
-        return self.sand_points[point]
+            self.map_points_is_sand[point] = any(s.contains(shapelyPoint) for s in self.sand_traps)
+        return self.map_points_is_sand[point]
 
 
     def play(self, score: int, golf_map: sympy.Polygon, target: sympy.geometry.Point2D, sand_traps: List[sympy.Polygon], curr_loc: sympy.geometry.Point2D, prev_loc: sympy.geometry.Point2D, prev_landing_point: sympy.geometry.Point2D, prev_admissible: bool) -> Tuple[float, float]:
@@ -360,7 +387,7 @@ class Player:
         if not prev_admissible and self.prev_rv is not None:
             return self.prev_rv
 
-        self.current_shot_in_sand = self.in_sand_trap(curr_loc)
+        self.current_shot_in_sand = self.is_in_sand(curr_loc)
         # print(f"Current shot in sand: {self.current_shot_in_sand}")
 
         target_point = None
@@ -400,3 +427,36 @@ class Player:
         rv = curr_loc.distance(Point2D(target_point, evaluate=False)), angle
         self.prev_rv = rv
         return rv
+
+
+# === Unit Tests ===
+
+def test_reachable():
+    current_point = Point2D(0, 0, evaluate=False)
+    target_point = Point2D(0, 250, evaluate=False)
+    player = Player(50, 0xdeadbeef, None)
+    
+    assert not player.reachable_point(current_point, target_point, 0.80)
+
+
+def test_splash_zone_within_polygon():
+    poly = Polygon((0,0), (0, 300), (300, 300), (300, 0), evaluate=False)
+
+    current_point = Point2D(0, 0, evaluate=False)
+
+    # Just checking polygons inside and outside
+    inside_target_point = Point2D(150, 150, evaluate=False)
+    outside_target_point = Point2D(299, 100, evaluate=False)
+
+    player = Player(50, 0xdeadbeef, None)
+    assert player.splash_zone_within_polygon(current_point, inside_target_point, poly, 0.8)
+    assert not player.splash_zone_within_polygon(current_point, outside_target_point, poly, 0.8)
+
+
+def test_poly_to_points():
+    poly = Polygon((0,0), (0, 10), (10, 10), (10, 0))
+    points = set(poly_to_points(poly))
+    for x in range(1, 10):
+        for y in range(1, 10):
+            assert (x,y) in points
+    assert len(points) == 81
