@@ -268,7 +268,7 @@ class Player:
         if is_in_sandtrap:
             distance_mask = cloc_distances <= self._max_ddist_sand_ppf(conf)
         else:
-            distance_mask = (cloc_distances * 1.10) <= self._max_ddist_ppf(conf)
+            distance_mask = cloc_distances <= self._max_ddist_ppf(conf)
 
         reachable_points = self.np_points[distance_mask]
         goal_distances = self.np_goal_dist[distance_mask]
@@ -376,7 +376,11 @@ class Player:
         if type(target_point) == Point2D:
             target_point = tuple(Point2D)
 
-        distance = np.linalg.norm(np.array(current_point).astype(float) - np.array(target_point).astype(float))
+        is_in_sandtrap = any([sandtrap.contains_point(target_point) for sandtrap in self.mpl_poly_trap])
+        if is_in_sandtrap:
+            distance = np.linalg.norm(np.array(current_point).astype(float) - np.array(target_point).astype(float))
+        else: 
+            distance = (np.linalg.norm(np.array(current_point).astype(float) - np.array(target_point).astype(float)) * 1.08)
         cx, cy = float(current_point[0]), float(current_point[1])
         tx, ty = float(target_point[0]), float(target_point[1])
         angle = np.arctan2(ty - cy, tx - cx)
@@ -456,7 +460,7 @@ class Player:
                 cx, cy = current_point
                 tx, ty = target_point
                 angle = np.arctan2(ty - cy, tx - cx)
-                rv = min(dist1(target_point, current_point) / (1 - (1 / self.skill * 3)), constants.min_putter_dist), angle
+                rv = min(dist1(target_point, current_point) / (1 - (1 / self.skill * 3)), constants.min_putter_dist)+1, angle
                 self.prev_rv = rv
                 return rv
             
