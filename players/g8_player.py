@@ -249,9 +249,11 @@ class Player:
         target_point = np.array(target_point).astype(float)
 
         if self.point_in_sandtrap_mpl(current_point):
-            return np.linalg.norm(current_point - target_point) <= self._max_sand_ddist_ppf(conf)
+            return np.linalg.norm(current_point - target_point) <= (200 + self.skill) / 2
+            # return np.linalg.norm(current_point - target_point) <= self._max_sand_ddist_ppf(conf)
         else:
-            return np.linalg.norm(current_point - target_point) <= self._max_ddist_ppf(conf)
+            return np.linalg.norm(current_point - target_point) <= 200 + self.skill
+            # return np.linalg.norm(current_point - target_point) <= self._max_ddist_ppf(conf)
 
     def splash_zone_within_polygon(self, current_point: Tuple[float, float], target_point: Tuple[float, float], conf: float) -> bool:
         if type(current_point) == Point2D:
@@ -279,12 +281,12 @@ class Player:
         splash_zone_poly_points = splash_zone(float(distance), float(angle), float(conf), self.skill, current_point, current_in_sandtrap, target_in_sandtrap)
         return self.shapely_poly.contains(ShapelyPolygon(splash_zone_poly_points))
 
-    def numpy_adjacent_and_dist (self, point: Tuple[float, float], conf: float):
+    def numpy_adjacent_and_dist (self, point: Tuple[float, float]):
         cloc_distances = cdist(self.np_map_points, np.array([np.array(point)]), 'euclidean')
         cloc_distances = cloc_distances.flatten()
 
-        distance_mask = cloc_distances <= self._max_ddist_ppf(conf)
-        sand_trap_distance_mask = cloc_distances <= self._max_sand_ddist_ppf(conf)
+        distance_mask = cloc_distances <= 200 + self.skill
+        sand_trap_distance_mask = cloc_distances <= (200 + self.skill) / 2
 
         reachable_points = None
         if self.point_in_sandtrap_mpl(point):
@@ -302,7 +304,7 @@ class Player:
         
         return False
 
-    def next_target(self, curr_loc: Tuple[float, float], goal: Point2D, conf: float) -> Union[None, Tuple[float, float]]:
+    def next_target(self, curr_loc: Tuple[float, float], goal: Point2D) -> Union[None, Tuple[float, float]]:
         point_goal = float(goal.x), float(goal.y)
         heap = [ScoredPoint(curr_loc, point_goal, 0.0)]
         start_point = heap[0].point
@@ -340,7 +342,7 @@ class Player:
                 return next_sp.point
             
             # Add adjacent points to heap
-            reachable_points, goal_dists = self.numpy_adjacent_and_dist(next_p, conf)
+            reachable_points, goal_dists = self.numpy_adjacent_and_dist(next_p)
             for i in range(len(reachable_points)):
                 candidate_point = tuple(reachable_points[i])
                 goal_dist = goal_dists[i]
@@ -364,6 +366,7 @@ class Player:
                     heapq.heappush(heap, new_point)
 
         # No path available
+        print(reachable_points)
         return None
 
     def _initialize_map_points(self, goal: Tuple[float, float], golf_map: Polygon, sand_traps: list[sympy.Polygon]):
@@ -488,12 +491,7 @@ class Player:
         target_point = None
         confidence = self.conf
         cl = float(curr_loc.x), float(curr_loc.y)
-        while target_point is None:
-            if confidence <= 0.5:
-                return None
-
-            target_point = self.next_target(cl, target, confidence)
-            confidence -= 0.05
+        target_point = self.next_target(cl, target)
 
         # fixup target
         current_point = np.array(tuple(curr_loc)).astype(float)
