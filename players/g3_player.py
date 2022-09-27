@@ -315,8 +315,7 @@ class Player:
         goal_distances = []
         for pt, distance_to_pt, distance_to_goal in zip(self.np_map_points, point_distances, self.np_goal_dist):
             point_in_st = self.is_point_in_sand(point)
-            # if distance_to_pt <= (max_distance_with_st_roll if point_in_st else max_distance_with_grass_roll):
-            if distance_to_pt <= (max_distance_no_roll):
+            if distance_to_pt <= (max_distance_with_st_roll if point_in_st else max_distance_with_grass_roll):
                 reachable_points.append(pt)
                 goal_distances.append(distance_to_goal)
 
@@ -423,51 +422,54 @@ class Player:
         target_point = None
         confidence = self.conf
         cl = float(curr_loc.x), float(curr_loc.y)
-        print(f"current location: {cl[0]}, {cl[1]}")
         
         while target_point is None:
             if confidence <= 0.0:
                 return None
 
-            print(f"searching with {confidence} confidence")
             target_point = self.next_target(cl, target, confidence)
-            print(f"found target point: {target_point}")
+            if target_point:
+                continue
 
             confidence -= 0.05
 
         # fixup target
+        original_target = target_point
         current_point = np.array(tuple(curr_loc)).astype(float)
-        if tuple(target_point) == self.goal:
-            original_dist = np.linalg.norm(np.array(target_point) - current_point)
-            v = np.array(target_point) - current_point
-            # Unit vector pointing from current to target
-            u = v / original_dist
-            if original_dist >= 20.0:
-                roll_distance = original_dist / 20
-                increment = 0.1
-                max_offset = roll_distance
-                offset = 0
-                
-                prev_target = target_point
-                first_in_sand = True
-                while offset < max_offset and self.splash_zone_within_polygon(tuple(current_point), tuple(target_point), confidence):
-                    ##Changed how if we rolled into the sand trap the rolling distance decrease, and we increment with a smaller step
-                    if self.is_point_in_sand(target_point) and first_in_sand == True:
-                        max_offset = offset + 0.01
-                        increment = 0.001
-                        first_in_sand = False
-               
-                    ##prevent the ball from backing into a sandtrap
-                    offset += increment
-                    dist = original_dist - offset
-                    prev_target = target_point
-                    target_point = current_point + u * dist
-                target_point = prev_target
+        original_dist = np.linalg.norm(np.array(target_point) - current_point)
+        v = np.array(target_point) - current_point # Vector from current to target
+        u = v / original_dist # Unit vector pointing from current to target
+
+        if original_dist >= 20.0:
+            max_roll = (original_dist / 1.1) * 0.1
+            max_offset = max_roll if tuple(target_point) != self.goal else max_roll * 0.5
+            offset = 0
+            
+            # If target point is in a sand trap, try backing up, up to 10% more, to avoid
+            if self.is_point_in_sand(target_point):
+                max_offset = max_offset * 1.1
+
+            while offset <= max_offset and self.splash_zone_within_polygon(tuple(current_point), tuple(target_point), confidence) and not self.is_point_in_sand(target):
+                offset += 0.1
+                dist = original_dist - min(offset, max_offset)
+                target_point = current_point + u * dist
+
+
+            print('\n')
+            print(f"Current location: {round(cl[0], 2)}, {round(cl[1], 2)}")
+            print(F"Original target point: {round(original_target[0], 2)}, {round(original_target[1], 2)}")
+            print(f"Offset: {round(original_dist - dist, 2)} (max allowed offset: {round(max_offset, 2)})")
+            print(f"Corrected target point: {round(target_point[0], 2)}, {round(target_point[1], 2)}")
+            print('\n')
 
         cx, cy = current_point
         tx, ty = target_point
         angle = np.arctan2(ty - cy, tx - cx)
 
+
         rv = curr_loc.distance(Point2D(target_point, evaluate=False)), angle
         self.prev_rv = rv
         return rv
+
+
+        # x + 0.1x = original_dist -> x = original_dist/1.1 -> max_rolling_dist = (original_dist/1.1)*0.1
