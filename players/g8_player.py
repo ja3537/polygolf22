@@ -1,41 +1,3 @@
-'''import numpy as np
-import sympy
-import logging
-from typing import Tuple, List
-
-class Player:
-    def __init__(self, skill: int, rng: np.random.Generator, logger: logging.Logger, golf_map: sympy.Polygon, start: sympy.geometry.Point2D, target: sympy.geometry.Point2D, sand_traps: List[sympy.geometry.Point2D], map_path: str, precomp_dir: str) -> None:
-        """Initialise the player with given skill.
-
-        Args:
-            skill (int): skill of your player
-            rng (np.random.Generator): numpy random number generator, use this for same player behvior across run
-            logger (logging.Logger): logger use this like logger.info("message")
-            golf_map (sympy.Polygon): Golf Map polygon
-            start (sympy.geometry.Point2D): Start location
-            target (sympy.geometry.Point2D): Target location
-            map_path (str): File path to map
-            precomp_dir (str): Directory path to store/load precomputation
-        """
-
-
-    def play(self, score: int, golf_map: sympy.Polygon, target: sympy.geometry.Point2D, sand_traps: List[sympy.geometry.Point2D], curr_loc: sympy.geometry.Point2D, prev_loc: sympy.geometry.Point2D, prev_landing_point: sympy.geometry.Point2D, prev_admissible: bool) -> Tuple[float, float]:
-        """Function which based n current game state returns the distance and angle, the shot must be played
-
-        Args:
-            score (int): Your total score including current turn
-            golf_map (sympy.Polygon): Golf Map polygon
-            target (sympy.geometry.Point2D): Target location
-            curr_loc (sympy.geometry.Point2D): Your current location
-            prev_loc (sympy.geometry.Point2D): Your previous location. If you haven't played previously then None
-            prev_landing_point (sympy.geometry.Point2D): Your previous shot landing location. If you haven't played previously then None
-            prev_admissible (bool): Boolean stating if your previous shot was within the polygon limits. If you haven't played previously then None
-
-        Returns:
-            Tuple[float, float]: Return a tuple of distance and angle in radians to play the shot
-        """
-
-'''
 import os
 import pickle
 import numpy as np
@@ -520,17 +482,11 @@ class Player:
                 joint_cord_is_sand = np.logical_or(joint_cord_is_sand, sandtrap.contains_points(joint_cords))
         
         joint_cord_is_land = self.mpl_poly.contains_points(joint_cords)
-        #joint_cord_is_water = np.logical_not(joint_cord_is_land)
 
         land_total_prob = np.sum(joint_dist_pdf, where=joint_cord_is_land) / joint_total_prob
         water_prob = 1 - land_total_prob
         sand_prob = np.sum(joint_dist_pdf, where=joint_cord_is_sand) / joint_total_prob
         green_prob = land_total_prob - sand_prob
-
-        '''print("water_prob: " + str(water_prob))
-        print("sand_prob: " + str(sand_prob))
-        print("green_prob: " + str(green_prob))
-        print("Total Prob: " + str(water_prob + sand_prob + green_prob))'''
 
         if water_prob > 0.9999:
             return 11
@@ -544,28 +500,6 @@ class Player:
 
 # === Unit Tests ===
 
-'''def test_reachable():
-    current_point = Point2D(0, 0, evaluate=False)
-    target_point = Point2D(0, 250, evaluate=False)
-    player = Player(50, 0xdeadbeef, None)
-    
-    assert not player.reachable_point(current_point, target_point)
-
-
-def test_splash_zone_within_polygon():
-    poly = Polygon((0,0), (0, 300), (300, 300), (300, 0), evaluate=False)
-
-    current_point = Point2D(0, 0, evaluate=False)
-
-    # Just checking polygons inside and outside
-    inside_target_point = Point2D(150, 150, evaluate=False)
-    outside_target_point = Point2D(299, 100, evaluate=False)
-
-    player = Player(50, 0xdeadbeef, None)
-    assert player.splash_zone_within_polygon(current_point, inside_target_point, poly, 0.8)
-    assert not player.splash_zone_within_polygon(current_point, outside_target_point, poly, 0.8)'''
-
-
 def test_poly_to_points():
     poly = Polygon((0,0), (0, 10), (10, 10), (10, 0))
     points = set(poly_to_points(poly))
@@ -573,71 +507,3 @@ def test_poly_to_points():
         for y in range(1, 10):
             assert (x,y) in points
     assert len(points) == 81
-
-
-# Functions originally in Player class
-'''def reachable_point(self, current_point: Tuple[float, float], target_point: Tuple[float, float]) -> bool:
-        """Determine whether the point is reachable with confidence [conf] based on our player's skill"""
-
-        if type(current_point) == Point2D:
-            current_point = tuple(current_point)
-        if type(target_point) == Point2D:
-            target_point = tuple(target_point)
-
-        current_point = np.array(current_point).astype(float)
-        target_point = np.array(target_point).astype(float)
-
-        if self.point_in_sandtrap_mpl(current_point):
-            return np.linalg.norm(current_point - target_point) <= (200 + self.skill) / 2
-        else:
-            return np.linalg.norm(current_point - target_point) <= 200 + self.skill'''
-
-'''def splash_zone(distance: float, angle: float, conf: float, skill: int, current_point: Tuple[float, float], current_in_sandtrap: bool = False, target_in_sandtrap: bool = False) -> np.array:
-    conf_points = np.linspace(1 - conf, conf, 5)
-    distances = np.vectorize(standard_ppf)(conf_points) * (distance / skill) + distance
-
-    angle_factor = 2 if current_in_sandtrap else 1
-
-    angles = np.vectorize(standard_ppf)(conf_points) * (1*angle_factor/(2*skill)) + angle
-
-    scale = 1.1
-
-    #when in in_sandtrap, do not account for rolling by extending splash zone
-    if distance <= 20 or target_in_sandtrap:
-        scale = 1.0
-    max_distance = distances[-1]*scale
-    top_arc = spread_points(current_point, angles, max_distance, False)
-
-    if distance > 20:
-        min_distance = distances[0]
-        bottom_arc = spread_points(current_point, angles, min_distance, True)
-        return np.concatenate((top_arc, bottom_arc, np.array([top_arc[0]])))
-
-    current_point = np.array([current_point])
-    return np.concatenate((current_point, top_arc, current_point))'''
-
-'''def splash_zone_within_polygon(self, current_point: Tuple[float, float], target_point: Tuple[float, float], conf: float) -> bool:
-        if type(current_point) == Point2D:
-            current_point = tuple(Point2D)
-
-        if type(target_point) == Point2D:
-            target_point = tuple(Point2D)
-
-        #CHANGES: checks if point shot from is in sandtrap
-        current_in_sandtrap = False
-        if  current_point in np.array(self.np_sand_trap_points):
-            current_in_sandtrap = True
-
-        #CHANGES: checks if landing point is in sandtrap
-        target_in_sandtrap = False
-        if  target_point in np.array(self.np_sand_trap_points):
-            target_in_sandtrap = True
-
-        distance = np.linalg.norm(np.array(current_point).astype(float) - np.array(target_point).astype(float))
-        cx, cy = current_point
-        tx, ty = target_point
-        angle = np.arctan2(float(ty) - float(cy), float(tx) - float(cx))
-
-        #CHANGES: add in_sandtrap
-        splash_zone_poly_points = splash_zone(float(distance), float(angle), float(conf), self.skill, current_point, current_in_sandtrap, target_in_sandtrap)
-        return self.shapely_poly.contains(ShapelyPolygon(splash_zone_poly_points))'''
