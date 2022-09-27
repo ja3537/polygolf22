@@ -80,33 +80,6 @@ def spread_points(current_point, angles: np.array, distance, reverse) -> np.arra
     ys = np.sin(angles) * distance + curr_y
     return np.column_stack((xs, ys))
 
-
-def splash_zone(distance: float, angle: float, conf: float, skill: int, current_point: Tuple[float, float], current_in_sandtrap: bool = False, target_in_sandtrap: bool = False) -> np.array:
-    conf_points = np.linspace(1 - conf, conf, 5)
-    distances = np.vectorize(standard_ppf)(conf_points) * (distance / skill) + distance
-
-    angle_factor = 2 if current_in_sandtrap else 1
-
-    angles = np.vectorize(standard_ppf)(conf_points) * (1*angle_factor/(2*skill)) + angle
-
-    scale = 1.1
-
-    #when in in_sandtrap, do not account for rolling by extending splash zone
-    if distance <= 20 or target_in_sandtrap:
-        scale = 1.0
-    max_distance = distances[-1]*scale
-    top_arc = spread_points(current_point, angles, max_distance, False)
-
-    if distance > 20:
-        min_distance = distances[0]
-        bottom_arc = spread_points(current_point, angles, min_distance, True)
-        return np.concatenate((top_arc, bottom_arc, np.array([top_arc[0]])))
-
-    current_point = np.array([current_point])
-    return np.concatenate((current_point, top_arc, current_point))
-
-
-
 def sympy_poly_to_mpl(sympy_poly: Polygon) -> Path:
     """Helper function to convert sympy Polygon to matplotlib Path object"""
     v = list(sympy_poly.vertices)
@@ -223,37 +196,6 @@ class Player:
 
         #hash data, key = (scored_point), value = next optimal point from scored_point
         self.optimal_next = {}
-
-        # Conf level
-        self.conf = 0.95
-        if self.skill < 40:
-            self.conf = 0.75
-
-    def splash_zone_within_polygon(self, current_point: Tuple[float, float], target_point: Tuple[float, float], conf: float) -> bool:
-        if type(current_point) == Point2D:
-            current_point = tuple(Point2D)
-
-        if type(target_point) == Point2D:
-            target_point = tuple(Point2D)
-
-        #CHANGES: checks if point shot from is in sandtrap
-        current_in_sandtrap = False
-        if  current_point in np.array(self.np_sand_trap_points):
-            current_in_sandtrap = True
-
-        #CHANGES: checks if landing point is in sandtrap
-        target_in_sandtrap = False
-        if  target_point in np.array(self.np_sand_trap_points):
-            target_in_sandtrap = True
-
-        distance = np.linalg.norm(np.array(current_point).astype(float) - np.array(target_point).astype(float))
-        cx, cy = current_point
-        tx, ty = target_point
-        angle = np.arctan2(float(ty) - float(cy), float(tx) - float(cx))
-
-        #CHANGES: add in_sandtrap
-        splash_zone_poly_points = splash_zone(float(distance), float(angle), float(conf), self.skill, current_point, current_in_sandtrap, target_in_sandtrap)
-        return self.shapely_poly.contains(ShapelyPolygon(splash_zone_poly_points))
 
     def numpy_adjacent_and_dist (self, point: Tuple[float, float]):
         cloc_distances = cdist(self.np_map_points, np.array([np.array(point)]), 'euclidean')
@@ -463,7 +405,6 @@ class Player:
             return self.prev_rv
 
         target_point = None
-        confidence = self.conf
         cl = float(curr_loc.x), float(curr_loc.y)
         target_point = self.next_target(cl, target)
 
@@ -481,7 +422,6 @@ class Player:
                 offset = 0
                 lowest_ev_target = target_point
                 lowest_ev = self.get_ev(current_point, target_point, self.skill, in_sand)
-                # while offset < max_offset * .5 and self.splash_zone_within_polygon(tuple(current_point), target_point, confidence):
                 while offset < max_offset * .5:
                     offset += 1
                     dist = original_dist - offset
@@ -604,7 +544,7 @@ class Player:
 
 # === Unit Tests ===
 
-def test_reachable():
+'''def test_reachable():
     current_point = Point2D(0, 0, evaluate=False)
     target_point = Point2D(0, 250, evaluate=False)
     player = Player(50, 0xdeadbeef, None)
@@ -623,10 +563,20 @@ def test_splash_zone_within_polygon():
 
     player = Player(50, 0xdeadbeef, None)
     assert player.splash_zone_within_polygon(current_point, inside_target_point, poly, 0.8)
-    assert not player.splash_zone_within_polygon(current_point, outside_target_point, poly, 0.8)
+    assert not player.splash_zone_within_polygon(current_point, outside_target_point, poly, 0.8)'''
 
 
-def reachable_point(self, current_point: Tuple[float, float], target_point: Tuple[float, float]) -> bool:
+def test_poly_to_points():
+    poly = Polygon((0,0), (0, 10), (10, 10), (10, 0))
+    points = set(poly_to_points(poly))
+    for x in range(1, 10):
+        for y in range(1, 10):
+            assert (x,y) in points
+    assert len(points) == 81
+
+
+# Functions originally in Player class
+'''def reachable_point(self, current_point: Tuple[float, float], target_point: Tuple[float, float]) -> bool:
         """Determine whether the point is reachable with confidence [conf] based on our player's skill"""
 
         if type(current_point) == Point2D:
@@ -640,13 +590,54 @@ def reachable_point(self, current_point: Tuple[float, float], target_point: Tupl
         if self.point_in_sandtrap_mpl(current_point):
             return np.linalg.norm(current_point - target_point) <= (200 + self.skill) / 2
         else:
-            return np.linalg.norm(current_point - target_point) <= 200 + self.skill
+            return np.linalg.norm(current_point - target_point) <= 200 + self.skill'''
 
+'''def splash_zone(distance: float, angle: float, conf: float, skill: int, current_point: Tuple[float, float], current_in_sandtrap: bool = False, target_in_sandtrap: bool = False) -> np.array:
+    conf_points = np.linspace(1 - conf, conf, 5)
+    distances = np.vectorize(standard_ppf)(conf_points) * (distance / skill) + distance
 
-def test_poly_to_points():
-    poly = Polygon((0,0), (0, 10), (10, 10), (10, 0))
-    points = set(poly_to_points(poly))
-    for x in range(1, 10):
-        for y in range(1, 10):
-            assert (x,y) in points
-    assert len(points) == 81
+    angle_factor = 2 if current_in_sandtrap else 1
+
+    angles = np.vectorize(standard_ppf)(conf_points) * (1*angle_factor/(2*skill)) + angle
+
+    scale = 1.1
+
+    #when in in_sandtrap, do not account for rolling by extending splash zone
+    if distance <= 20 or target_in_sandtrap:
+        scale = 1.0
+    max_distance = distances[-1]*scale
+    top_arc = spread_points(current_point, angles, max_distance, False)
+
+    if distance > 20:
+        min_distance = distances[0]
+        bottom_arc = spread_points(current_point, angles, min_distance, True)
+        return np.concatenate((top_arc, bottom_arc, np.array([top_arc[0]])))
+
+    current_point = np.array([current_point])
+    return np.concatenate((current_point, top_arc, current_point))'''
+
+'''def splash_zone_within_polygon(self, current_point: Tuple[float, float], target_point: Tuple[float, float], conf: float) -> bool:
+        if type(current_point) == Point2D:
+            current_point = tuple(Point2D)
+
+        if type(target_point) == Point2D:
+            target_point = tuple(Point2D)
+
+        #CHANGES: checks if point shot from is in sandtrap
+        current_in_sandtrap = False
+        if  current_point in np.array(self.np_sand_trap_points):
+            current_in_sandtrap = True
+
+        #CHANGES: checks if landing point is in sandtrap
+        target_in_sandtrap = False
+        if  target_point in np.array(self.np_sand_trap_points):
+            target_in_sandtrap = True
+
+        distance = np.linalg.norm(np.array(current_point).astype(float) - np.array(target_point).astype(float))
+        cx, cy = current_point
+        tx, ty = target_point
+        angle = np.arctan2(float(ty) - float(cy), float(tx) - float(cx))
+
+        #CHANGES: add in_sandtrap
+        splash_zone_poly_points = splash_zone(float(distance), float(angle), float(conf), self.skill, current_point, current_in_sandtrap, target_in_sandtrap)
+        return self.shapely_poly.contains(ShapelyPolygon(splash_zone_poly_points))'''
