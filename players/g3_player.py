@@ -243,7 +243,7 @@ class Player(object):
         return self.shapely_poly.contains(ShapelyPolygon(splash_zone_poly_points))
 
     # Find whether the splash zone is within the region we're aiming at (ONLY FOR POINTS IN REGION DICT!!!)
-    def splash_zone_within_region(self, current_point: Tuple[float, float], target_point: Tuple[float, float], conf: float) -> bool:
+    def splash_zone_within_region(self, current_point: Tuple[float, float], target_point: Tuple[float, float], conf: float) -> float:
         if type(current_point) == Point2D:
             current_point = tuple(Point2D)
 
