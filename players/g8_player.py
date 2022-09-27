@@ -55,11 +55,9 @@ from scipy.spatial.distance import cdist
 
 # Cached distribution
 DIST = scipy_stats.norm(0, 1)
-X_STEP = 5.0
-Y_STEP = 5.0
 
 #Sampling Size
-SAMPLE_SIZE = 10000
+SAMPLE_SIZE = 1000
 
 @functools.lru_cache()
 def standard_ppf(conf: float) -> float:
@@ -124,7 +122,7 @@ def sympy_poly_to_shapely(sympy_poly: Polygon) -> ShapelyPolygon:
 
 class ScoredPoint:
     """Scored point class for use in A* search algorithm"""
-    def __init__(self, point: Tuple[float, float], goal: Tuple[float, float], actual_cost=float('inf'), previous=None, goal_dist=None, skill=50):
+    def __init__(self, point: Tuple[float, float], goal: Tuple[float, float], actual_cost=float('inf'), previous=None, goal_dist=None, skill=50, in_sandtrap = False):
         self.point = point
         self.goal = goal
 
@@ -142,6 +140,8 @@ class ScoredPoint:
         self._h_cost = goal_dist / max_dist
 
         self._f_cost = self.actual_cost + self.h_cost
+
+        self.in_sandtrap = in_sandtrap
 
     @property
     def f_cost(self):
@@ -215,6 +215,13 @@ class Player:
         self.np_sand_trap_points = None
         self.mpl_sand_polys = None
         self.max_sand_ddist = scipy_stats.norm(max_dist / 2, (max_dist / self.skill)*2)
+
+        #hash data for ev(a,b), key = (origin, dest), eg. ((1,1), (2,2)), value = EV((1,1,), (2,2))
+        self.ev_hash = {}
+
+
+        #hash data, key = (scored_point), value = next optimal point from scored_point
+        self.optimal_next = {}
 
         # Conf level
         self.conf = 0.95
@@ -312,7 +319,10 @@ class Player:
                 continue
             if next_sp.actual_cost > 10:
                 continue
+
             if next_sp.actual_cost > 0 and not self.splash_zone_within_polygon(next_sp.previous.point, next_p, conf):
+
+                #if we have already seen a quicker way to get to next_p
                 if next_p in best_cost:
                     del best_cost[next_p]
                 continue
@@ -331,9 +341,18 @@ class Player:
             for i in range(len(reachable_points)):
                 candidate_point = tuple(reachable_points[i])
                 goal_dist = goal_dists[i]
-                marginal_ev_of_hits_to_candidate_point = self.get_ev(next_sp.point, candidate_point, self.skill, self.point_in_sandtrap_mpl(next_sp.point))
+
+                marginal_ev_of_hits_to_candidate_point = None
+
+                if (next_p,candidate_point) in self.ev_hash:
+                    marginal_ev_of_hits_to_candidate_point = self.ev_hash[(next_p,candidate_point)]
+                else:
+                    marginal_ev_of_hits_to_candidate_point = self.get_ev(next_sp.point, candidate_point, self.skill, self.point_in_sandtrap_mpl(next_sp.point))
+                    self.ev_hash[(next_p,candidate_point)] = marginal_ev_of_hits_to_candidate_point
+
                 new_point = ScoredPoint(candidate_point, point_goal, next_sp.actual_cost + marginal_ev_of_hits_to_candidate_point, next_sp,
                                         goal_dist=goal_dist, skill=self.skill)
+
                 if candidate_point not in best_cost or best_cost[candidate_point] > new_point.actual_cost:
                     points_checked += 1
                     # if not self.splash_zone_within_polygon(new_point.previous.point, new_point.point, conf):
@@ -535,14 +554,14 @@ class Player:
 
         joint_cord_is_sand = None
         for sandtrap in self.mpl_sand_polys:
-            if joint_cord_is_sand == None:
+            if joint_cord_is_sand is None:
                 joint_cord_is_sand = sandtrap.contains_points(joint_cords)
             
             else:
                 joint_cord_is_sand = np.logical_or(joint_cord_is_sand, sandtrap.contains_points(joint_cords))
         
         joint_cord_is_land = self.mpl_poly.contains_points(joint_cords)
-        joint_cord_is_water = np.logical_not(joint_cord_is_land)
+        #joint_cord_is_water = np.logical_not(joint_cord_is_land)
 
         land_total_prob = np.sum(joint_dist_pdf, where=joint_cord_is_land) / joint_total_prob
         water_prob = 1 - land_total_prob
