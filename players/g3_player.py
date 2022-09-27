@@ -79,8 +79,8 @@ def sympy_poly_to_shapely(sympy_poly: Polygon) -> ShapelyPolygon:
 
 class ScoredPoint:
     """Scored point class for use in A* search algorithm"""
-    def __init__(self, point: Tuple[float, float], goal: Tuple[float, float], is_sand:bool,starting_point:Tuple[float,float],
-                 is_starting_sand:bool,np_map_points:np.ndarray ,actual_cost=float('inf'), previous=None, goal_dist=None, skill=50):
+    def __init__(self, point: Tuple[float, float], goal: Tuple[float, float], is_sand: bool, starting_point: Tuple[float,float],
+                 is_starting_sand: bool, np_map_points: np.ndarray, actual_cost=float('inf'), previous=None, goal_dist=None, skill=50):
         self.point = point
         self.goal = goal
 
@@ -97,21 +97,8 @@ class ScoredPoint:
         max_target_dist = 200 + skill
         max_dist = standard_ppf(0.99) * (max_target_dist / skill) + max_target_dist
         max_dist *= 1.10
-        ##H cost computation:--------------------------------------------------
-        cloc_distances = cdist(np_map_points, np.array([np.array(self.point)]), 'euclidean')
-        cloc_distances = cloc_distances.flatten()
-        rolling_distance = cdist(np.array([np.array(self.point)]),np.array([np.array(starting_point)]), 'euclidean')
-        if is_sand:
-            rolling_distance = 0.01
-        rolling_ddist =  scipy_stats.norm(rolling_distance, rolling_distance / skill)
-        if is_starting_sand:
-            rolling_ddist =  scipy_stats.norm(rolling_distance,2* rolling_distance / skill) ## if the starting point is a sandtrap, then the standar deviation is * 2
-        rolling_ddist_ppf = rolling_ddist.ppf(1)
-        
-        distance_mask = cloc_distances <= (rolling_ddist_ppf)
-        reachable_points = np_map_points[distance_mask]
-            
-        #figure out all the node reachable by rolling distance 
+
+
         
         self._h_cost = goal_dist / max_dist + sandtrap_cost ## make this better :)
 
@@ -296,19 +283,6 @@ class Player:
     @functools.lru_cache()
     def _max_ddist_st_ppf(self, conf: float):
         return self.max_ddist_st.ppf(1.0 - conf)
-
-    # TODO: change for sandtrap support - testing method, not important
-    def reachable_point(self, current_point: Tuple[float, float], target_point: Tuple[float, float], conf: float) -> bool:
-        """Determine whether the point is reachable with confidence [conf] based on our player's skill"""
-        if type(current_point) == Point2D:
-            current_point = tuple(current_point)
-        if type(target_point) == Point2D:
-            target_point = tuple(target_point)
-
-        current_point = np.array(current_point).astype(float)
-        target_point = np.array(target_point).astype(float)
-
-        return np.linalg.norm(current_point - target_point) <= self._max_ddist_ppf(conf)
     
     def splash_zone_within_polygon(self, current_point: Tuple[float, float], target_point: Tuple[float, float], conf: float) -> bool:
         if type(current_point) == Point2D:
@@ -326,25 +300,37 @@ class Player:
                                               self.is_point_in_sand(target_point))
         return self.shapely_poly.contains(ShapelyPolygon(splash_zone_poly_points))
 
-    def numpy_adjacent_and_dist(self, point: Tuple[float, float], conf: float, is_sand: bool):
-        cloc_distances = cdist(self.np_map_points, np.array([np.array(point)]), 'euclidean')
-        cloc_distances = cloc_distances.flatten()
-        distance_mask = cloc_distances <= (self._max_ddist_ppf(conf) if not is_sand else self._max_ddist_st_ppf(conf))
+    def numpy_adjacent_and_dist(self, point: Tuple[float, float], conf: float):
+        shooting_from_st = self.is_point_in_sand(point)
 
-        reachable_points = self.np_map_points[distance_mask]
-        goal_distances = self.np_goal_dist[distance_mask]
+        max_distance_no_roll = self._max_ddist_ppf(conf) if not shooting_from_st else self._max_ddist_st_ppf(conf)
+        max_distance_with_grass_roll = max_distance_no_roll * 1.1
+        max_distance_with_st_roll = max_distance_no_roll + 0.01
+
+
+        point_distances = cdist(self.np_map_points, np.array([np.array(point)]), 'euclidean')
+        point_distances = point_distances.flatten()
+
+        reachable_points = []
+        goal_distances = []
+        for pt, distance_to_pt, distance_to_goal in zip(self.np_map_points, point_distances, self.np_goal_dist):
+            point_in_st = self.is_point_in_sand(point)
+            # if distance_to_pt <= (max_distance_with_st_roll if point_in_st else max_distance_with_grass_roll):
+            if distance_to_pt <= (max_distance_no_roll):
+                reachable_points.append(pt)
+                goal_distances.append(distance_to_goal)
 
         return reachable_points, goal_distances
 
-    def next_target(self, curr_loc: Tuple[float, float], goal: Point2D, conf: float) -> Union[None, Tuple[float, float]]:
+    def next_target(self, currrent_point: Tuple[float, float], goal: Point2D, conf: float) -> Union[None, Tuple[float, float]]:
         point_goal = float(goal.x), float(goal.y)
-        is_curr_sand = self.is_point_in_sand(curr_loc)
-        heap = [ScoredPoint(curr_loc, point_goal, self.is_point_in_sand(curr_loc),
-                            curr_loc,is_curr_sand,self.np_map_points,0.0)]
+        is_curr_sand = self.is_point_in_sand(currrent_point)
+        heap = [ScoredPoint(currrent_point, point_goal, self.is_point_in_sand(currrent_point),
+                            currrent_point, is_curr_sand, self.np_map_points,0.0)]
 
         start_point = heap[0].point
         # Used to cache the best cost and avoid adding useless points to the heap
-        best_cost = {tuple(curr_loc): 0.0}
+        best_cost = {tuple(currrent_point): 0.0}
         visited = set()
         points_checked = 0
         while len(heap) > 0:
@@ -370,12 +356,12 @@ class Player:
                 return next_sp.point
             
             # Add adjacent points to heap
-            reachable_points, goal_dists = self.numpy_adjacent_and_dist(next_p, conf, self.is_point_in_sand(next_p))
+            reachable_points, goal_dists = self.numpy_adjacent_and_dist(next_p, conf)
            
             for i in range(len(reachable_points)):
                 candidate_point = tuple(reachable_points[i])
                 goal_dist = goal_dists[i]
-                new_point = ScoredPoint(candidate_point, point_goal, self.is_point_in_sand(candidate_point),curr_loc,is_curr_sand,
+                new_point = ScoredPoint(candidate_point, point_goal, self.is_point_in_sand(candidate_point),currrent_point,is_curr_sand,
                                         self.np_map_points,next_sp.actual_cost + 1, next_sp, goal_dist=goal_dist, skill=self.skill)
                         ##(self, point: Tuple[float, float], goal: Tuple[float, float], is_sand:bool,starting_point:Tuple[float,float],
                  ##is_starting_sand:bool,np_map_points:np.ndarray ,actual_cost=float('inf'), previous=None, goal_dist=None, skill=50):
