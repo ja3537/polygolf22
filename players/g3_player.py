@@ -79,8 +79,8 @@ def sympy_poly_to_shapely(sympy_poly: Polygon) -> ShapelyPolygon:
 
 class ScoredPoint:
     """Scored point class for use in A* search algorithm"""
-    def __init__(self, point: Tuple[float, float], goal: Tuple[float, float], is_sand, actual_cost=float('inf'),
-                 previous=None, goal_dist=None, skill=50):
+    def __init__(self, point: Tuple[float, float], goal: Tuple[float, float], is_sand:bool,starting_point:Tuple[float,float],
+                 is_starting_sand:bool,np_map_points:np.ndarray ,actual_cost=float('inf'), previous=None, goal_dist=None, skill=50):
         self.point = point
         self.goal = goal
 
@@ -97,7 +97,23 @@ class ScoredPoint:
         max_target_dist = 200 + skill
         max_dist = standard_ppf(0.99) * (max_target_dist / skill) + max_target_dist
         max_dist *= 1.10
-        self._h_cost = goal_dist / max_dist + sandtrap_cost
+        ##H cost computation:--------------------------------------------------
+        cloc_distances = cdist(np_map_points, np.array([np.array(self.point)]), 'euclidean')
+        cloc_distances = cloc_distances.flatten()
+        rolling_distance = cdist(np.array([np.array(self.point)]),np.array([np.array(starting_point)]), 'euclidean')
+        if is_sand:
+            rolling_distance = 0.01
+        rolling_ddist =  scipy_stats.norm(rolling_distance, rolling_distance / skill)
+        if is_starting_sand:
+            rolling_ddist =  scipy_stats.norm(rolling_distance,2* rolling_distance / skill) ## if the starting point is a sandtrap, then the standar deviation is * 2
+        rolling_ddist_ppf = rolling_ddist.ppf(1)
+        
+        distance_mask = cloc_distances <= (rolling_ddist_ppf)
+        reachable_points = np_map_points[distance_mask]
+            
+        #figure out all the node reachable by rolling distance 
+        
+        self._h_cost = goal_dist / max_dist + sandtrap_cost ## make this better :)
 
         self._f_cost = self.actual_cost + self.h_cost
 
@@ -112,7 +128,9 @@ class ScoredPoint:
     @property
     def actual_cost(self):
         return self._actual_cost
+    
 
+     
     def __lt__(self, other):
         return self.f_cost < other.f_cost
 
@@ -320,7 +338,10 @@ class Player:
 
     def next_target(self, curr_loc: Tuple[float, float], goal: Point2D, conf: float) -> Union[None, Tuple[float, float]]:
         point_goal = float(goal.x), float(goal.y)
-        heap = [ScoredPoint(curr_loc, point_goal, self.is_point_in_sand(curr_loc), 0.0)]
+        is_curr_sand = self.is_point_in_sand(curr_loc)
+        heap = [ScoredPoint(curr_loc, point_goal, self.is_point_in_sand(curr_loc),
+                            curr_loc,is_curr_sand,self.np_map_points,0.0)]
+
         start_point = heap[0].point
         # Used to cache the best cost and avoid adding useless points to the heap
         best_cost = {tuple(curr_loc): 0.0}
@@ -354,8 +375,10 @@ class Player:
             for i in range(len(reachable_points)):
                 candidate_point = tuple(reachable_points[i])
                 goal_dist = goal_dists[i]
-                new_point = ScoredPoint(candidate_point, point_goal, self.is_point_in_sand(candidate_point),
-                                        next_sp.actual_cost + 1, next_sp, goal_dist=goal_dist, skill=self.skill)
+                new_point = ScoredPoint(candidate_point, point_goal, self.is_point_in_sand(candidate_point),curr_loc,is_curr_sand,
+                                        self.np_map_points,next_sp.actual_cost + 1, next_sp, goal_dist=goal_dist, skill=self.skill)
+                        ##(self, point: Tuple[float, float], goal: Tuple[float, float], is_sand:bool,starting_point:Tuple[float,float],
+                 ##is_starting_sand:bool,np_map_points:np.ndarray ,actual_cost=float('inf'), previous=None, goal_dist=None, skill=50):
                 if candidate_point not in best_cost or best_cost[candidate_point] > new_point.actual_cost:
                     points_checked += 1
                     # if not self.splash_zone_within_polygon(new_point.previous.point, new_point.point, conf):
