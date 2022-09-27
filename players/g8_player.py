@@ -320,13 +320,15 @@ class Player:
                 continue
             if next_sp.actual_cost > 10:
                 continue
-
+            
+            """
             if next_sp.actual_cost > 0 and not self.splash_zone_within_polygon(next_sp.previous.point, next_p, conf):
 
                 #if we have already seen a quicker way to get to next_p
                 if next_p in best_cost:
                     del best_cost[next_p]
                 continue
+            """
             visited.add(next_p)
 
             if np.linalg.norm(np.array(self.goal) - np.array(next_p)) <= 5.4 / 100.0:
@@ -339,7 +341,6 @@ class Player:
             
             # Add adjacent points to heap
             reachable_points, goal_dists = self.numpy_adjacent_and_dist(next_p, conf)
-            print(len(reachable_points))
             for i in range(len(reachable_points)):
                 candidate_point = tuple(reachable_points[i])
                 goal_dist = goal_dists[i]
@@ -405,8 +406,6 @@ class Player:
         self.np_sand_trap_points = np.array(np_sand_trap_points)
         self.np_goal_dist = cdist(self.np_map_points, np.array([np.array(self.goal)]), 'euclidean')
         self.np_goal_dist = self.np_goal_dist.flatten()
-
-        print(len(np_map_points))
     
     def poly_to_points(self, poly: Polygon, mpl_poly: Path) -> list[Tuple[float, float]]:
 
