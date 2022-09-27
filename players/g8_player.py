@@ -59,7 +59,8 @@ X_STEP = 5.0
 Y_STEP = 5.0
 
 #Sampling Size
-SAMPLE_SIZE = 10000
+#SAMPLE_SIZE = 10000
+SAMPLE_SIZE = 250
 
 @functools.lru_cache()
 def standard_ppf(conf: float) -> float:
@@ -328,6 +329,7 @@ class Player:
             
             # Add adjacent points to heap
             reachable_points, goal_dists = self.numpy_adjacent_and_dist(next_p, conf)
+            print(len(reachable_points))
             for i in range(len(reachable_points)):
                 candidate_point = tuple(reachable_points[i])
                 goal_dist = goal_dists[i]
@@ -370,20 +372,22 @@ class Player:
                     np_sand_trap_points.append(np.array([x, y]))
 
         #add points along edges of map  
-        np_map_points += self.polygon_edge_sampler(golf_map, 40)
+        # np_map_points += self.polygon_edge_sampler(golf_map, 40)
 
         #add points along edges of sandtraps
         for s in sand_traps:
             temp = self.polygon_edge_sampler(s, 20)
 
             #add the sand trap edges to both the map_points and sand_trap_points
-            np_map_points += temp
+            # np_map_points += temp
             np_sand_trap_points += temp
 
         self.np_map_points = np.array(np_map_points)
         self.np_sand_trap_points = np.array(np_sand_trap_points)
         self.np_goal_dist = cdist(self.np_map_points, np.array([np.array(self.goal)]), 'euclidean')
         self.np_goal_dist = self.np_goal_dist.flatten()
+
+        print(len(np_map_points))
     
     def poly_to_points(self, poly: Polygon, mpl_poly: Path) -> list[Tuple[float, float]]:
 
@@ -502,7 +506,7 @@ class Player:
         
     def get_ev(self, origin: Tuple[float, float], dest: Tuple[float, float], skill, origin_in_sand: bool):
         # assumes dest is reachable with the current distance rating
-        granularity = 5
+        granularity = 1
 
         o_x, o_y = origin
         d_x, d_y = dest
@@ -512,9 +516,14 @@ class Player:
         d_dist_stdev = distance / skill                                                     # standard dev
         if origin_in_sand:
             d_dist_stdev *= 2
-        d_dist = scipy_stats.norm(distance, d_dist_stdev)                                   # distance distribution
-        d_dist_samples = np.linspace(d_dist.ppf(0.01), d_dist.ppf(0.99), granularity)       # evenly spaced points in distribution
-        d_dist_pdf = d_dist.pdf(d_dist_samples) / np.sum(d_dist.pdf(d_dist_samples))        # probability corresponding to each point (normalized)
+        
+        if d_dist_stdev == 0.0:
+            d_dist_samples = np.array([distance])
+            d_dist_pdf = np.array([1])
+        else:
+            d_dist = scipy_stats.norm(distance, d_dist_stdev)                                   # distance distribution
+            d_dist_samples = np.linspace(d_dist.ppf(0.01), d_dist.ppf(0.99), granularity)       # evenly spaced points in distribution
+            d_dist_pdf = d_dist.pdf(d_dist_samples) / np.sum(d_dist.pdf(d_dist_samples))        # probability corresponding to each point (normalized)
 
         # angle
         angle = np.arctan2(d_y - o_y, d_x - o_x)
@@ -554,12 +563,12 @@ class Player:
         print("green_prob: " + str(green_prob))
         print("Total Prob: " + str(water_prob + sand_prob + green_prob))'''
 
-        expected_tries_to_hit_land = land_total_prob**(-1)          # if probability of hitting land is 0.25, we expect 0.25**(-1) = 4 tries to hit land
-
-        if water_prob == 1:
+        if water_prob > 0.9999:
             return 11
         
-        expected_value = (water_prob * expected_tries_to_hit_land) + (sand_prob * 1.2) + (green_prob * 1)
+        expected_tries_to_hit_land = land_total_prob**(-1)          # if probability of hitting land is 0.25, we expect 0.25**(-1) = 4 tries to hit land
+        
+        expected_value = (water_prob * expected_tries_to_hit_land) + (sand_prob * 1) + (green_prob * 1)
 
         return expected_value
 
