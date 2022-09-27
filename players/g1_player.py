@@ -48,7 +48,7 @@ def splash_zone(distance: float, angle: float, conf: float, skill: int, current_
     if in_sandtrap:
         # the distance rating is halved, and the standard deviations for the angle and distance distributions are doubled
         distances = np.vectorize(standard_ppf)(
-            conf_points) * (distance / skill) * 2 + distance / 2
+            conf_points) * (distance / skill) * 2 + distance
         angles = np.vectorize(standard_ppf)(
             conf_points) * (1/(2*skill)) * 2 + angle
     else:
@@ -470,6 +470,7 @@ class Player:
 
         # fixup target
         current_point = np.array(tuple(curr_loc)).astype(float)
+
         if tuple(target_point) == self.goal:
             original_dist = np.linalg.norm(
                 np.array(target_point) - current_point)
