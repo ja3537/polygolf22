@@ -1,5 +1,7 @@
 import logging
 import multiprocessing
+import os.path
+import pickle
 from itertools import product
 from time import perf_counter
 from typing import List, Tuple
@@ -7,6 +9,7 @@ from typing import List, Tuple
 import mdptoolbox
 import numpy as np
 import sympy
+from matplotlib import pyplot as plt
 from scipy.stats import norm
 from shapely.geometry import Point as ShapelyPoint
 from shapely.geometry import Polygon as ShapelyPolygon
@@ -15,9 +18,10 @@ from shapely.geometry import Polygon as ShapelyPolygon
 # Problem Configuration
 # =====================
 #
+DEBUG = True
+samples = 100
 x_quant = 25
 y_quant = 25
-# Distance rating: 200 + s
 dist_quant = 20
 angle_quant = 36
 
@@ -36,6 +40,15 @@ def to_cartesian(r, theta):
     return r * np.cos(theta), r * np.sin(theta)
 
 
+def to_polar(x, y):
+    return np.sqrt(x**2 + y**2), np.arctan2(y, x)
+
+
+def debug(*args):
+    if DEBUG:
+        print(*args)
+
+
 # ======
 # Player
 # ======
@@ -52,7 +65,6 @@ class Player:
     # Shot transition calculation
     # ===========================
     #
-    # distance/angle space -> x/y space?
     def sample_shots(
         self,
         start_x,
@@ -61,7 +73,7 @@ class Player:
         distance,
         angle,
         in_sand,
-        num_samples=100,
+        num_samples=samples,
     ):
         distance_dev = distance / skill
         angle_dev = 1 / (2 * skill)
@@ -159,13 +171,13 @@ class Player:
         return [self.transition_for_action_at_state(action, state) for state in self.S]
 
     def gen_T_parallel(self):
-        print("Generating T...")
+        debug("Generating T...")
         t_start = perf_counter()
         pool = multiprocessing.Pool(multiprocessing.cpu_count())
         T = np.array(pool.map(self.gen_action_transitions, self.A))
-        # T = np.array([gen_action_transitions(action) for action in A])
+        # T = np.array([self.gen_action_transitions(action) for action in self.A])
         t_end = perf_counter()
-        print("T generated in", t_end - t_start, "seconds")
+        debug("T generated in", t_end - t_start, "seconds")
         return T
 
     def __init__(
@@ -183,7 +195,9 @@ class Player:
         self.skill = skill
         self.rng = rng
         self.logger = logger
+        self.map_file = map_path
 
+        self.start = start.coordinates
         self.target = target.coordinates
         self.green_poly = sympy_poly_to_shapely(golf_map)
         self.sand_polys = [sympy_poly_to_shapely(trap) for trap in sand_traps]
@@ -192,7 +206,25 @@ class Player:
         self.init_terrain()
         self.init_mdp()
 
-        self.solve_mdp()
+        precomp_path = os.path.join(
+            precomp_dir, "{}_skill-{}.pkl".format(map_path, skill)
+        )
+
+        # precompute check
+        if os.path.isfile(precomp_path):
+            # Getting back the objects:
+            debug("Found cached policy", precomp_path)
+            with open(precomp_path, "rb") as f:
+                self.policy = pickle.load(f)
+        else:
+            self.solve_mdp()
+            if DEBUG:
+                self.visualize_value()
+                self.visualize_policy()
+
+            # Dump the objects
+            with open(precomp_path, "wb") as f:
+                pickle.dump(self.policy, f)
 
     def init_geometry(self):
         # =============================
@@ -201,7 +233,7 @@ class Player:
         #
         map_min_x, map_min_y, map_max_x, map_max_y = self.green_poly.bounds
 
-        print(f"Map boundaries: x {map_min_x}, {map_max_x} y {map_min_y} {map_max_y}")
+        debug(f"Map boundaries: x {map_min_x}, {map_max_x} y {map_min_y} {map_max_y}")
 
         self.x_tick = (map_max_x - map_min_x) / x_quant
         self.y_tick = (map_max_y - map_min_y) / y_quant
@@ -211,13 +243,13 @@ class Player:
         min_y = map_min_y - self.y_tick
         max_y = map_max_y + self.y_tick
 
-        print(f"Bin boundaries: x {min_x}, {max_x} y {min_y} {max_y}")
+        debug(f"Bin boundaries: x {min_x}, {max_x} y {min_y} {max_y}")
 
         self.x_bins = np.linspace(min_x, max_x, x_quant + 2, endpoint=False)
         self.y_bins = np.linspace(min_y, max_y, y_quant + 2, endpoint=False)
         self.total_x_bins = len(self.x_bins)
         self.total_y_bins = len(self.y_bins)
-        print("bins:", self.total_x_bins, self.total_y_bins)
+        debug("bins:", self.total_x_bins, self.total_y_bins)
 
     def init_terrain(self):
         # ==============
@@ -308,16 +340,13 @@ class Player:
 
         self.num_states = len(self.S)
         self.num_actions = len(self.A)
-        print("states:", self.num_states)
-        print("actions:", self.num_actions)
+        debug("states:", self.num_states)
+        debug("actions:", self.num_actions)
 
         # Used for invalid actions
         # S[-1] is an "invalid" sink state: shots going there stay there forever
         self.unreachable_transition = np.array([0 for _ in range(self.num_states)])
         self.unreachable_transition[-1] = 1
-
-        # The expensive step
-        self.T = self.gen_T_parallel()
 
         # =============
         # Reward vector
@@ -332,15 +361,20 @@ class Player:
         self.R[ti] = 1
 
     def solve_mdp(self):
+        # The expensive step
+        self.T = self.gen_T_parallel()
+
         # ===========
         # Train model
         # ===========
         #
-        print("Training model...")
+        debug("Training model...")
         self.mdp = mdptoolbox.mdp.PolicyIteration(self.T, self.R, 0.89, max_iter=20)
         self.mdp.setVerbose()
         self.mdp.run()
-        print("Converged in", self.mdp.time)
+        debug("Converged in", self.mdp.time)
+
+        self.policy = self.mdp.policy
 
     def play(
         self,
@@ -360,6 +394,115 @@ class Player:
         )
         xi, yi = self.to_bin_index(curr_x, curr_y)
         curr_bin = self.S_index[(xi, yi, "sand" if in_sand else "green")]
-        policy = self.mdp.policy[curr_bin]
-        distance, angle = self.A[policy]
+        policy = self.policy[curr_bin]
+        planned_distance, planned_angle = self.A[policy]
+
+        # Compensate for difference between planned shot (center of tile) and
+        # actual ball location
+        cx = self.x_bins[xi] + 0.5 * self.x_tick
+        cy = self.y_bins[yi] + 0.5 * self.y_tick
+
+        planned_dx, planned_dy = to_cartesian(planned_distance, planned_angle)
+        end_x = cx + planned_dx
+        end_y = cy + planned_dy
+
+        distance, angle = to_polar(end_x - curr_x, end_y - curr_y)
+        self.logger.info(f"Distance adjusted by {distance - planned_distance}")
+        self.logger.info(f"Angle adjusted by {angle - planned_angle}")
+
+        if distance > 200 + self.skill:
+            self.logger.warning("Compensated shot is longer than max distance rating")
+            return (planned_distance, planned_angle)
+
         return (distance, angle)
+
+    # =====================
+    # Visualization Helpers
+    # =====================
+    #
+    def draw_bins(self):
+        for x in self.x_bins:
+            plt.axvline(x=x, color="black", alpha=0.1)
+        for y in self.y_bins:
+            plt.axhline(y=y, color="black", alpha=0.1)
+
+    def draw_map(self):
+        plt.fill(
+            *list(zip(*self.green_poly.exterior.coords)),
+            facecolor="#bbff66",
+            edgecolor="black",
+            linewidth=1,
+        )
+        start_x, start_y = self.start
+        plt.plot(start_x, start_y, "b.")
+        target_x, target_y = self.target
+        plt.plot(target_x, target_y, "r.")
+
+        for trap_poly in self.sand_polys:
+            plt.fill(
+                *list(zip(*trap_poly.exterior.coords)),
+                facecolor="#ffffcc",
+                edgecolor="black",
+                linewidth=1,
+            )
+
+    def reset_figure(self):
+        plt.clf()
+        plt.gca().invert_yaxis()
+        # plt.gca().set_aspect(width / height)
+        self.draw_bins()
+        self.draw_map()
+
+    def overlay_tiles(self, tiles, vmin=None, vmax=None):
+        X, Y = np.meshgrid(
+            self.x_bins + 0.5 * self.x_tick, self.y_bins + 0.5 * self.y_tick
+        )
+        plt.pcolormesh(X, Y, tiles, alpha=0.5, vmin=vmin, vmax=vmax)
+
+    # ================
+    # Visualize values
+    # ================
+    #
+    def visualize_value(self):
+        self.reset_figure()
+        v_hist = np.zeros((self.total_y_bins, self.total_x_bins))
+        sorted_values = sorted(self.mdp.V[:-1])
+        vmin = sorted_values[1]
+        vmax = sorted_values[-1]
+        for i, value in enumerate(self.mdp.V[:-1]):
+            yi, xi, terrain = self.S[i]
+            if terrain == "green":
+                v_hist[yi][xi] = value
+            elif terrain == "sand" and self.percent_sand[yi][xi] > 0.9:
+                v_hist[yi][xi] = value
+        self.reset_figure()
+        self.overlay_tiles(v_hist, vmin=vmin, vmax=vmax)
+        plt.title(f"Values: {self.map_file}, skill {self.skill}")
+        plt.savefig("value.png", dpi=400)
+
+    # ================
+    # Visualize policy
+    # ================
+    #
+    def visualize_policy(self):
+        self.reset_figure()
+        for i, policy in enumerate(self.mdp.policy[:-1]):
+            yi, xi, terrain = self.S[i]
+            distance, angle = self.A[policy]
+            dx, dy = to_cartesian(distance, angle)
+            start_x = self.x_bins[xi] + 0.5 * self.x_tick
+            start_y = self.y_bins[yi] + 0.5 * self.y_tick
+            plt.arrow(
+                start_x,
+                start_y,
+                dx,
+                dy,
+                color="black" if terrain == "green" else "red",
+                alpha=0.2,
+                linewidth=1,
+                head_width=8,
+                head_length=8,
+                length_includes_head=True,
+            )
+        plt.title(f"Policy: {self.map_file}, skill {self.skill}")
+        plt.savefig("policy.png", dpi=400)
