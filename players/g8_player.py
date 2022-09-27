@@ -394,7 +394,7 @@ class Player:
                         lowest_ev = ev_of_cur_target
                 target_point = lowest_ev_target
 
-            elif original_dist < 20 and in_sand == False and rv[0] > 20:
+            elif original_dist < 20 and in_sand == False:
                 if self.skill >= 60:
                     target_point = current_point + u * (original_dist * 1.5)
                 elif self.skill >= 40:
