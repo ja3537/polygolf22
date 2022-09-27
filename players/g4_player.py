@@ -96,7 +96,7 @@ def sympy_poly_to_shapely(sympy_poly: Polygon) -> ShapelyPolygon:
 
 class ScoredPoint:
     """Scored point class for use in A* search algorithm"""
-    def __init__(self, point: Tuple[float, float], goal: Tuple[float, float], actual_cost=float('inf'), previous=None, goal_dist=None, skill=50, sand_penalty=0, trapped=False):
+    def __init__(self, point: Tuple[float, float], goal: Tuple[float, float], actual_cost=float('inf'), previous=None, goal_dist=None, skill=50, sand_penalty=0, trapped=None):
         self.point = point
         self.goal = goal
 
@@ -112,7 +112,7 @@ class ScoredPoint:
         max_dist = standard_ppf(0.99) * (max_target_dist / skill) + max_target_dist
         max_dist *= 1.10
 
-        self.trapped = (sand_penalty != 0)
+        self.trapped = (sand_penalty != 0) if trapped is None else trapped
         self._h_cost = (sand_penalty + goal_dist) / max_dist
 
         self._f_cost = self.actual_cost + self.h_cost
@@ -194,6 +194,7 @@ class Player:
         self.shapely_poly = sympy_poly_to_shapely(golf_map)
         pp = list(poly_to_points(golf_map))
         sand_penalty = [0]
+        #point_trapped = [False]
         for point in pp:
             # Use matplotlib here because it's faster than shapely for this calculation...
             if self.mpl_poly.contains_point(point):
@@ -207,7 +208,9 @@ class Player:
                         trapped = True
                         break
                 if not trapped: sand_penalty.append(0)
+                #point_trapped.append(trapped)
         
+        #self.point_trapped = np.array(point_trapped, dtype=bool)
         self.np_sand_penalty = np.array(sand_penalty)
         self.np_map_points = np.array(np_map_points)
         self.np_goal_dist = cdist(self.np_map_points, np.array([np.array(self.goal)]), 'euclidean')
@@ -259,14 +262,14 @@ class Player:
             elif mode == 'nearby':
                 distance_mask = cloc_distances <= self._nearby_ddist_ppf(conf)
 
-        # if not trapped:
-        #     # check if there's sand blocking a putter shot
-        #     # NEEDS OPTIMIZATION (e.g., check after choosing a shot)
-        #     putt_shot_indices = np.where(cloc_distances < 20)[0]
-        #     for i in putt_shot_indices:
-        #         line = ShapelyLine([point, tuple(self.np_map_points[i])])
-        #         if any([line.intersects(trap) for trap in self.shapely_sand_polys]):
-        #             distance_mask[i] = False
+        if not trapped:
+            # check if there's sand blocking a putter shot
+            # NEEDS OPTIMIZATION (e.g., check after choosing a shot)
+            putt_shot_indices = np.where(cloc_distances < 20)[0]
+            for i in putt_shot_indices:
+                line = ShapelyLine([point, tuple(self.np_map_points[i])])
+                if any([line.intersects(trap) for trap in self.shapely_sand_polys]):
+                    distance_mask[i] = False
 
         reachable_points = self.np_map_points[distance_mask]
         goal_distances = self.np_goal_dist[distance_mask]
@@ -313,9 +316,9 @@ class Player:
 
 
     def next_target(self, curr_loc: Tuple[float, float], goal: Point2D, conf: float, score=0) -> Union[None, Tuple[float, float]]:
-        #trapped = any([trap.contains_point(curr_loc) for trap in self.mpl_sand_polys])
+        trapped = any([trap.contains_point(curr_loc) for trap in self.mpl_sand_polys])
         point_goal = float(goal.x), float(goal.y)
-        heap = [ScoredPoint(curr_loc, point_goal, score)]
+        heap = [ScoredPoint(curr_loc, point_goal, score, trapped=trapped)]
         start_point = heap[0].point
         # Used to cache the best cost and avoid adding useless points to the heap
         best_cost = {tuple(curr_loc): 0.0}
@@ -352,10 +355,8 @@ class Player:
             reachable_points, goal_dists, sand_penalties = self.numpy_adjacent_and_dist(next_p, conf, trapped=next_sp.trapped)
             for i in range(len(reachable_points)):
                 candidate_point = tuple(reachable_points[i])
-                goal_dist = goal_dists[i]
-                sand_penalty = sand_penalties[i]
                 new_point = ScoredPoint(candidate_point, point_goal, next_sp.actual_cost + 1, next_sp,
-                                        goal_dist=goal_dist, skill=self.skill, sand_penalty=sand_penalty)
+                                        goal_dist=goal_dists[i], skill=self.skill, sand_penalty=sand_penalties[i])
                 if candidate_point not in best_cost or best_cost[candidate_point] > new_point.actual_cost:
                     points_checked += 1
                     # if not self.splash_zone_within_polygon(new_point.previous.point, new_point.point, conf):
