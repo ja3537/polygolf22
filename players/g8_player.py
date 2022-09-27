@@ -58,7 +58,7 @@ DIST = scipy_stats.norm(0, 1)
 
 #Sampling Size
 #SAMPLE_SIZE = 0
-SAMPLE_SIZE = 1000
+SAMPLE_SIZE = 250
 
 @functools.lru_cache()
 def standard_ppf(conf: float) -> float:
@@ -228,32 +228,6 @@ class Player:
         self.conf = 0.95
         if self.skill < 40:
             self.conf = 0.75
-
-    @functools.lru_cache()
-    def _max_ddist_ppf(self, conf: float):
-        return self.max_ddist.ppf(0.05)
-
-    @functools.lru_cache()
-    def _max_sand_ddist_ppf(self, conf: float):
-        return self.max_sand_ddist.ppf(0.05)
-
-    def reachable_point(self, current_point: Tuple[float, float], target_point: Tuple[float, float], conf: float) -> bool:
-        """Determine whether the point is reachable with confidence [conf] based on our player's skill"""
-
-        if type(current_point) == Point2D:
-            current_point = tuple(current_point)
-        if type(target_point) == Point2D:
-            target_point = tuple(target_point)
-
-        current_point = np.array(current_point).astype(float)
-        target_point = np.array(target_point).astype(float)
-
-        if self.point_in_sandtrap_mpl(current_point):
-            return np.linalg.norm(current_point - target_point) <= (200 + self.skill) / 2
-            # return np.linalg.norm(current_point - target_point) <= self._max_sand_ddist_ppf(conf)
-        else:
-            return np.linalg.norm(current_point - target_point) <= 200 + self.skill
-            # return np.linalg.norm(current_point - target_point) <= self._max_ddist_ppf(conf)
 
     def splash_zone_within_polygon(self, current_point: Tuple[float, float], target_point: Tuple[float, float], conf: float) -> bool:
         if type(current_point) == Point2D:
@@ -505,13 +479,19 @@ class Player:
                 roll_distance = original_dist * 0.1
                 max_offset = roll_distance
                 offset = 0
-                prev_target = target_point
-                while offset < max_offset * .5 and self.splash_zone_within_polygon(tuple(current_point), target_point, confidence):
+                lowest_ev_target = target_point
+                lowest_ev = self.get_ev(current_point, target_point, self.skill, in_sand)
+                # while offset < max_offset * .5 and self.splash_zone_within_polygon(tuple(current_point), target_point, confidence):
+                while offset < max_offset * .5:
                     offset += 1
                     dist = original_dist - offset
-                    prev_target = target_point
                     target_point = current_point + u * dist
-                target_point = prev_target
+                    ev_of_cur_target = self.get_ev(current_point, target_point, self.skill, in_sand)
+                    if ev_of_cur_target < lowest_ev:
+                        lowest_ev_target = target_point
+                        lowest_ev = ev_of_cur_target
+                target_point = lowest_ev_target
+
             elif original_dist < 20 and in_sand == False:
                 if self.skill >= 60:
                     target_point = current_point + u * (original_dist * 1.5)
@@ -629,7 +609,7 @@ def test_reachable():
     target_point = Point2D(0, 250, evaluate=False)
     player = Player(50, 0xdeadbeef, None)
     
-    assert not player.reachable_point(current_point, target_point, 0.80)
+    assert not player.reachable_point(current_point, target_point)
 
 
 def test_splash_zone_within_polygon():
@@ -644,6 +624,23 @@ def test_splash_zone_within_polygon():
     player = Player(50, 0xdeadbeef, None)
     assert player.splash_zone_within_polygon(current_point, inside_target_point, poly, 0.8)
     assert not player.splash_zone_within_polygon(current_point, outside_target_point, poly, 0.8)
+
+
+def reachable_point(self, current_point: Tuple[float, float], target_point: Tuple[float, float]) -> bool:
+        """Determine whether the point is reachable with confidence [conf] based on our player's skill"""
+
+        if type(current_point) == Point2D:
+            current_point = tuple(current_point)
+        if type(target_point) == Point2D:
+            target_point = tuple(target_point)
+
+        current_point = np.array(current_point).astype(float)
+        target_point = np.array(target_point).astype(float)
+
+        if self.point_in_sandtrap_mpl(current_point):
+            return np.linalg.norm(current_point - target_point) <= (200 + self.skill) / 2
+        else:
+            return np.linalg.norm(current_point - target_point) <= 200 + self.skill
 
 
 def test_poly_to_points():
