@@ -30,8 +30,6 @@ DIST = scipy_stats.norm(0, 1)
 def standard_ppf(conf: float) -> float:
     return DIST.ppf(conf)
 
-
-
 def spread_points(current_point: Tuple[float, float], angles: np.array, distance: float, reverse: bool) -> np.array:
     curr_x, curr_y = current_point
     if reverse:
@@ -75,60 +73,6 @@ def sympy_poly_to_shapely(sympy_poly: Polygon) -> ShapelyPolygon:
     v = sympy_poly.vertices
     v.append(v[0])
     return ShapelyPolygon(v)
-
-
-class ScoredPoint:
-    """Scored point class for use in A* search algorithm"""
-    def __init__(self, point: Tuple[float, float], goal: Tuple[float, float], is_sand: bool, starting_point: Tuple[float,float],
-                 is_starting_sand: bool, np_map_points: np.ndarray, actual_cost=float('inf'), previous=None, goal_dist=None, skill=50):
-        self.point = point
-        self.goal = goal
-
-        self.previous = previous
-
-        self._actual_cost = actual_cost
-        self.is_sand = is_sand
-        if goal_dist is None:
-            a = np.array(self.point)
-            b = np.array(self.goal)
-            goal_dist = np.linalg.norm(a - b)
-
-        sandtrap_cost = 0.5 if is_sand else 0  # sandtrap adds an extra .5 shots
-        max_target_dist = 200 + skill
-        max_dist = standard_ppf(0.99) * (max_target_dist / skill) + max_target_dist
-        max_dist *= 1.10
-
-
-        
-        self._h_cost = goal_dist / max_dist + sandtrap_cost ## make this better :)
-
-        self._f_cost = self.actual_cost + self.h_cost
-
-    @property
-    def f_cost(self):
-        return self._f_cost
-
-    @property
-    def h_cost(self):
-        return self._h_cost
-
-    @property
-    def actual_cost(self):
-        return self._actual_cost
-    
-
-     
-    def __lt__(self, other):
-        return self.f_cost < other.f_cost
-
-    def __eq__(self, other):
-        return self.point == other.point
-    
-    def __hash__(self):
-        return hash(self.point)
-    
-    def __repr__(self):
-        return f"ScoredPoint(point = {self.point}, h_cost = {self.h_cost})"
 
 
 def create_vornoi_regions(map: sympy.Polygon, region_num: int, point_spacing: float) -> List[shapely.geometry.Polygon]:
@@ -203,7 +147,7 @@ def split_polygon(golf_map: sympy.Polygon, sand_traps: List[shapely.geometry.Pol
 
     return centroids_dict
 
-class Player:
+class Player(object):
     def __init__(self, skill: int, rng: np.random.Generator, logger: logging.Logger, golf_map: sympy.Polygon, start: sympy.geometry.Point2D, target: sympy.geometry.Point2D, sand_traps, map_path: str, precomp_dir: str) -> None:
         """Initialise the player with given skill.
 
@@ -307,25 +251,28 @@ class Player:
         max_distance_with_grass_roll = max_distance_no_roll * 1.1
         max_distance_with_st_roll = max_distance_no_roll + 0.01
 
-
         point_distances = cdist(self.np_map_points, np.array([np.array(point)]), 'euclidean')
         point_distances = point_distances.flatten()
 
         reachable_points = []
         goal_distances = []
+        st_points = []
         for pt, distance_to_pt, distance_to_goal in zip(self.np_map_points, point_distances, self.np_goal_dist):
             point_in_st = self.is_point_in_sand(point)
+
+            if point_in_st:
+                st_points.append(pt)
+
             if distance_to_pt <= (max_distance_with_st_roll if point_in_st else max_distance_with_grass_roll):
                 reachable_points.append(pt)
                 goal_distances.append(distance_to_goal)
 
-        return reachable_points, goal_distances
+        return reachable_points, goal_distances, st_points
 
     def next_target(self, currrent_point: Tuple[float, float], goal: Point2D, conf: float) -> Union[None, Tuple[float, float]]:
         point_goal = float(goal.x), float(goal.y)
         is_curr_sand = self.is_point_in_sand(currrent_point)
-        heap = [ScoredPoint(currrent_point, point_goal, self.is_point_in_sand(currrent_point),
-                            currrent_point, is_curr_sand, self.np_map_points,0.0)]
+        heap = [self.ScoredPoint(self, currrent_point, point_goal, actual_cost=0.0)]
 
         start_point = heap[0].point
         # Used to cache the best cost and avoid adding useless points to the heap
@@ -355,15 +302,12 @@ class Player:
                 return next_sp.point
             
             # Add adjacent points to heap
-            reachable_points, goal_dists = self.numpy_adjacent_and_dist(next_p, conf)
+            reachable_points, goal_dists, _ = self.numpy_adjacent_and_dist(next_p, conf)
            
             for i in range(len(reachable_points)):
                 candidate_point = tuple(reachable_points[i])
                 goal_dist = goal_dists[i]
-                new_point = ScoredPoint(candidate_point, point_goal, self.is_point_in_sand(candidate_point),currrent_point,is_curr_sand,
-                                        self.np_map_points,next_sp.actual_cost + 1, next_sp, goal_dist=goal_dist, skill=self.skill)
-                        ##(self, point: Tuple[float, float], goal: Tuple[float, float], is_sand:bool,starting_point:Tuple[float,float],
-                 ##is_starting_sand:bool,np_map_points:np.ndarray ,actual_cost=float('inf'), previous=None, goal_dist=None, skill=50):
+                new_point = Player.ScoredPoint(self, candidate_point, point_goal, actual_cost=next_sp.actual_cost + 1, previous=next_sp, goal_dist=goal_dist, skill=self.skill)
                 if candidate_point not in best_cost or best_cost[candidate_point] > new_point.actual_cost:
                     points_checked += 1
                     # if not self.splash_zone_within_polygon(new_point.previous.point, new_point.point, conf):
@@ -465,11 +409,63 @@ class Player:
         cx, cy = current_point
         tx, ty = target_point
         angle = np.arctan2(ty - cy, tx - cx)
+        distance = curr_loc.distance(Point2D(target_point, evaluate=False))
+        distance = min(distance, 200 + self.skill)
 
-
-        rv = curr_loc.distance(Point2D(target_point, evaluate=False)), angle
+        rv = distance, angle
         self.prev_rv = rv
         return rv
 
 
-        # x + 0.1x = original_dist -> x = original_dist/1.1 -> max_rolling_dist = (original_dist/1.1)*0.1
+    class ScoredPoint(object):
+        """Scored point class for use in A* search algorithm"""
+        def __init__(self, player, point: Tuple[float, float], goal: Tuple[float, float], actual_cost=float('inf'), previous=None, goal_dist=None, skill=50, conf=0.95):
+            self.point = point
+            self.goal = goal
+
+            self.previous = previous
+
+            self._actual_cost = actual_cost
+            if goal_dist is None:
+                a = np.array(self.point)
+                b = np.array(self.goal)
+                goal_dist = np.linalg.norm(a - b)
+
+            sandtrap_cost = 0.5 if player.is_point_in_sand(point) else 0  # sandtrap adds an extra .5 shots
+            max_dist = (200 + skill) * 1.1
+            
+            reachable_points, _, st_points = player.numpy_adjacent_and_dist(point, conf)
+
+            reachable_pts_ct = len(reachable_points)
+            reachable_st_pts_ct = len(st_points)
+            reachable_grass_pts = reachable_pts_ct - reachable_st_pts_ct
+            reachable_points_cost = (reachable_grass_pts * 1 + reachable_st_pts_ct * 1.5) / reachable_pts_ct
+
+            
+            self._h_cost = goal_dist / max_dist + sandtrap_cost + reachable_points_cost
+
+            self._f_cost = self.actual_cost + self.h_cost
+
+        @property
+        def f_cost(self):
+            return self._f_cost
+
+        @property
+        def h_cost(self):
+            return self._h_cost
+
+        @property
+        def actual_cost(self):
+            return self._actual_cost
+        
+        def __lt__(self, other):
+            return self.f_cost < other.f_cost
+
+        def __eq__(self, other):
+            return self.point == other.point
+        
+        def __hash__(self):
+            return hash(self.point)
+        
+        def __repr__(self):
+            return f"ScoredPoint(point = {self.point}, h_cost = {self.h_cost})"
