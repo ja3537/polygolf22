@@ -58,7 +58,7 @@ DIST = scipy_stats.norm(0, 1)
 
 #Sampling Size
 #SAMPLE_SIZE = 10000
-SAMPLE_SIZE = 250
+SAMPLE_SIZE = 350
 
 @functools.lru_cache()
 def standard_ppf(conf: float) -> float:
@@ -231,11 +231,11 @@ class Player:
 
     @functools.lru_cache()
     def _max_ddist_ppf(self, conf: float):
-        return self.max_ddist.ppf(1.0 - conf)
+        return self.max_ddist.ppf(0.001)
 
     @functools.lru_cache()
     def _max_sand_ddist_ppf(self, conf: float):
-        return self.max_sand_ddist.ppf(1.0 - conf)
+        return self.max_sand_ddist.ppf(0.001)
 
     def reachable_point(self, current_point: Tuple[float, float], target_point: Tuple[float, float], conf: float) -> bool:
         """Determine whether the point is reachable with confidence [conf] based on our player's skill"""
@@ -392,14 +392,14 @@ class Player:
                     np_sand_trap_points.append(np.array([x, y]))
 
         #add points along edges of map  
-        # np_map_points += self.polygon_edge_sampler(golf_map, 40)
+        np_map_points += self.polygon_edge_sampler(golf_map, 5)
 
         #add points along edges of sandtraps
         for s in sand_traps:
-            temp = self.polygon_edge_sampler(s, 20)
+            temp = self.polygon_edge_sampler(s, 5)
 
             #add the sand trap edges to both the map_points and sand_trap_points
-            # np_map_points += temp
+            np_map_points += temp
             np_sand_trap_points += temp
 
         self.np_map_points = np.array(np_map_points)
@@ -529,7 +529,7 @@ class Player:
         
     def get_ev(self, origin: Tuple[float, float], dest: Tuple[float, float], skill, origin_in_sand: bool):
         # assumes dest is reachable with the current distance rating
-        granularity = 1
+        granularity = 5
 
         o_x, o_y = origin
         d_x, d_y = dest
@@ -558,9 +558,26 @@ class Player:
         a_dist_pdf = a_dist.pdf(a_dist_samples) / np.sum(a_dist.pdf(a_dist_samples))        # probability corresponding to each point (normalized)
         
         # combine distance and angle into joint distribution
-        joint_x = (np.outer(d_dist_samples, np.cos(a_dist_samples)) + origin[0]).flatten()
-        joint_y = (np.outer(d_dist_samples, np.sin(a_dist_samples)) + origin[1]).flatten()
+        cos_a_dist_samples = np.cos(a_dist_samples)
+        sin_a_dist_samples = np.sin(a_dist_samples)
+        joint_x = (np.outer(d_dist_samples, cos_a_dist_samples) + origin[0]).flatten()
+        joint_y = (np.outer(d_dist_samples, sin_a_dist_samples) + origin[1]).flatten()
         joint_cords = np.array((joint_x, joint_y)).T
+
+        # check rolling
+        middle_idx = granularity // 2
+        roll_x_dist = (distance / 10) * cos_a_dist_samples[middle_idx]
+        roll_y_dist = (distance / 10) * sin_a_dist_samples[middle_idx]
+
+        roll_start = dest
+        roll_end = [roll_start[0] + roll_x_dist, roll_start[1] + roll_y_dist]
+        roll_vertecies = [roll_start, roll_end, roll_start]
+
+        roll_path = Path(roll_vertecies, closed=True)
+
+        # if landing point not in sand, and the rolling path is not COMPLETELY contained by any sort of land, return "impossible"
+        if(not self.point_in_sandtrap_mpl(dest) and not self.mpl_poly.contains_path(roll_path)):
+            return 11
         
         joint_dist_pdf = np.outer(d_dist_pdf, a_dist_pdf).flatten()
         joint_total_prob = np.sum(joint_dist_pdf)
