@@ -515,7 +515,12 @@ class Player:
                     target_point = current_point + u * dist
                 target_point = prev_target
             elif original_dist < 20 and in_sand == False:
-                target_point = current_point + u * (original_dist * 1.5)
+                if self.skill >= 60:
+                    target_point = current_point + u * (original_dist * 1.5)
+                elif self.skill >= 40:
+                    target_point = current_point + u * (original_dist * 1.25)
+                else:
+                    target_point = current_point + u * (original_dist * 1)
                 
         cx, cy = current_point
         tx, ty = target_point
