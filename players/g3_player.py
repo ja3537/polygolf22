@@ -242,6 +242,29 @@ class Player(object):
                                               self.is_point_in_sand(target_point))
         return self.shapely_poly.contains(ShapelyPolygon(splash_zone_poly_points))
 
+    # Find whether the splash zone is within the region we're aiming at (ONLY FOR POINTS IN REGION DICT!!!)
+    def splash_zone_within_region(self, current_point: Tuple[float, float], target_point: Tuple[float, float], conf: float) -> bool:
+        if type(current_point) == Point2D:
+            current_point = tuple(Point2D)
+
+        if type(target_point) == Point2D:
+            target_point = tuple(Point2D)
+
+        distance = np.linalg.norm(np.array(current_point).astype(float) - np.array(target_point).astype(float))
+        cx, cy = current_point
+        tx, ty = target_point
+        angle = np.arctan2(float(ty) - float(cy), float(tx) - float(cx))
+        splash_zone_poly_points = splash_zone(float(distance), float(angle), float(conf), self.skill, current_point,
+                                              self.is_point_in_sand(current_point),
+                                              self.is_point_in_sand(target_point))
+
+        corresp_region = self.centroids_dict[target_point]
+        splash_zone_shapely = ShapelyPolygon(splash_zone_poly_points)
+        ratio_of_overlapping_area = corresp_region.intersection(splash_zone_shapely).area / corresp_region.area
+
+        return ratio_of_overlapping_area
+
+
     def numpy_adjacent_and_dist(self, point: Tuple[float, float], conf: float):
         shooting_from_st = self.is_point_in_sand(point)
 
