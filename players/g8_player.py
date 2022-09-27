@@ -44,6 +44,7 @@ import sympy
 import logging
 import heapq
 from scipy import stats as scipy_stats
+import math
 
 from typing import Tuple, Iterator, List, Union
 from sympy.geometry import Polygon, Point2D
@@ -54,11 +55,10 @@ from scipy.spatial.distance import cdist
 
 # Cached distribution
 DIST = scipy_stats.norm(0, 1)
-X_STEP = 5.0
-Y_STEP = 5.0
 
 #Sampling Size
-SAMPLE_SIZE = 10000
+#SAMPLE_SIZE = 10000
+SAMPLE_SIZE = 250
 
 @functools.lru_cache()
 def standard_ppf(conf: float) -> float:
@@ -123,7 +123,7 @@ def sympy_poly_to_shapely(sympy_poly: Polygon) -> ShapelyPolygon:
 
 class ScoredPoint:
     """Scored point class for use in A* search algorithm"""
-    def __init__(self, point: Tuple[float, float], goal: Tuple[float, float], actual_cost=float('inf'), previous=None, goal_dist=None, skill=50):
+    def __init__(self, point: Tuple[float, float], goal: Tuple[float, float], actual_cost=float('inf'), previous=None, goal_dist=None, skill=50, in_sandtrap = False):
         self.point = point
         self.goal = goal
 
@@ -141,6 +141,8 @@ class ScoredPoint:
         self._h_cost = goal_dist / max_dist
 
         self._f_cost = self.actual_cost + self.h_cost
+
+        self.in_sandtrap = in_sandtrap
 
     @property
     def f_cost(self):
@@ -214,6 +216,13 @@ class Player:
         self.np_sand_trap_points = None
         self.mpl_sand_polys = None
         self.max_sand_ddist = scipy_stats.norm(max_dist / 2, (max_dist / self.skill)*2)
+
+        #hash data for ev(a,b), key = (origin, dest), eg. ((1,1), (2,2)), value = EV((1,1,), (2,2))
+        self.ev_hash = {}
+
+
+        #hash data, key = (scored_point), value = next optimal point from scored_point
+        self.optimal_next = {}
 
         # Conf level
         self.conf = 0.95
@@ -311,10 +320,15 @@ class Player:
                 continue
             if next_sp.actual_cost > 10:
                 continue
+            
+            """
             if next_sp.actual_cost > 0 and not self.splash_zone_within_polygon(next_sp.previous.point, next_p, conf):
+
+                #if we have already seen a quicker way to get to next_p
                 if next_p in best_cost:
                     del best_cost[next_p]
                 continue
+            """
             visited.add(next_p)
 
             if np.linalg.norm(np.array(self.goal) - np.array(next_p)) <= 5.4 / 100.0:
@@ -330,8 +344,18 @@ class Player:
             for i in range(len(reachable_points)):
                 candidate_point = tuple(reachable_points[i])
                 goal_dist = goal_dists[i]
-                new_point = ScoredPoint(candidate_point, point_goal, next_sp.actual_cost + 1, next_sp,
+
+                marginal_ev_of_hits_to_candidate_point = None
+
+                if (next_p,candidate_point) in self.ev_hash:
+                    marginal_ev_of_hits_to_candidate_point = self.ev_hash[(next_p,candidate_point)]
+                else:
+                    marginal_ev_of_hits_to_candidate_point = self.get_ev(next_sp.point, candidate_point, self.skill, self.point_in_sandtrap_mpl(next_sp.point))
+                    self.ev_hash[(next_p,candidate_point)] = marginal_ev_of_hits_to_candidate_point
+
+                new_point = ScoredPoint(candidate_point, point_goal, next_sp.actual_cost + marginal_ev_of_hits_to_candidate_point, next_sp,
                                         goal_dist=goal_dist, skill=self.skill)
+
                 if candidate_point not in best_cost or best_cost[candidate_point] > new_point.actual_cost:
                     points_checked += 1
                     # if not self.splash_zone_within_polygon(new_point.previous.point, new_point.point, conf):
@@ -368,14 +392,14 @@ class Player:
                     np_sand_trap_points.append(np.array([x, y]))
 
         #add points along edges of map  
-        np_map_points += self.polygon_edge_sampler(golf_map, 40)
+        # np_map_points += self.polygon_edge_sampler(golf_map, 40)
 
         #add points along edges of sandtraps
         for s in sand_traps:
             temp = self.polygon_edge_sampler(s, 20)
 
             #add the sand trap edges to both the map_points and sand_trap_points
-            np_map_points += temp
+            # np_map_points += temp
             np_sand_trap_points += temp
 
         self.np_map_points = np.array(np_map_points)
@@ -502,6 +526,74 @@ class Player:
             rv = 19.9, angle
         self.prev_rv = rv
         return rv
+        
+    def get_ev(self, origin: Tuple[float, float], dest: Tuple[float, float], skill, origin_in_sand: bool):
+        # assumes dest is reachable with the current distance rating
+        granularity = 1
+
+        o_x, o_y = origin
+        d_x, d_y = dest
+
+        # distance
+        distance = math.sqrt((o_x - d_x)**2 + (o_y - d_y)**2)
+        d_dist_stdev = distance / skill                                                     # standard dev
+        if origin_in_sand:
+            d_dist_stdev *= 2
+        
+        if d_dist_stdev == 0.0:
+            d_dist_samples = np.array([distance])
+            d_dist_pdf = np.array([1])
+        else:
+            d_dist = scipy_stats.norm(distance, d_dist_stdev)                                   # distance distribution
+            d_dist_samples = np.linspace(d_dist.ppf(0.01), d_dist.ppf(0.99), granularity)       # evenly spaced points in distribution
+            d_dist_pdf = d_dist.pdf(d_dist_samples) / np.sum(d_dist.pdf(d_dist_samples))        # probability corresponding to each point (normalized)
+
+        # angle
+        angle = np.arctan2(d_y - o_y, d_x - o_x)
+        a_dist_stdev = 1 / (2 * skill)                                                      # standard dev
+        if origin_in_sand:
+            a_dist_stdev *= 2
+        a_dist = scipy_stats.norm(angle, a_dist_stdev)                                      # angle distribution
+        a_dist_samples = np.linspace(a_dist.ppf(0.01), a_dist.ppf(0.99), granularity)       # evenly spaced points in distribution
+        a_dist_pdf = a_dist.pdf(a_dist_samples) / np.sum(a_dist.pdf(a_dist_samples))        # probability corresponding to each point (normalized)
+        
+        # combine distance and angle into joint distribution
+        joint_x = (np.outer(d_dist_samples, np.cos(a_dist_samples)) + origin[0]).flatten()
+        joint_y = (np.outer(d_dist_samples, np.sin(a_dist_samples)) + origin[1]).flatten()
+        joint_cords = np.array((joint_x, joint_y)).T
+        
+        joint_dist_pdf = np.outer(d_dist_pdf, a_dist_pdf).flatten()
+        joint_total_prob = np.sum(joint_dist_pdf)
+
+        joint_cord_is_sand = None
+        for sandtrap in self.mpl_sand_polys:
+            if joint_cord_is_sand is None:
+                joint_cord_is_sand = sandtrap.contains_points(joint_cords)
+            
+            else:
+                joint_cord_is_sand = np.logical_or(joint_cord_is_sand, sandtrap.contains_points(joint_cords))
+        
+        joint_cord_is_land = self.mpl_poly.contains_points(joint_cords)
+        #joint_cord_is_water = np.logical_not(joint_cord_is_land)
+
+        land_total_prob = np.sum(joint_dist_pdf, where=joint_cord_is_land) / joint_total_prob
+        water_prob = 1 - land_total_prob
+        sand_prob = np.sum(joint_dist_pdf, where=joint_cord_is_sand) / joint_total_prob
+        green_prob = land_total_prob - sand_prob
+
+        '''print("water_prob: " + str(water_prob))
+        print("sand_prob: " + str(sand_prob))
+        print("green_prob: " + str(green_prob))
+        print("Total Prob: " + str(water_prob + sand_prob + green_prob))'''
+
+        if water_prob > 0.9999:
+            return 11
+        
+        expected_tries_to_hit_land = land_total_prob**(-1)          # if probability of hitting land is 0.25, we expect 0.25**(-1) = 4 tries to hit land
+        
+        expected_value = (water_prob * expected_tries_to_hit_land) + (sand_prob * 1) + (green_prob * 1)
+
+        return expected_value
 
 
 # === Unit Tests ===
