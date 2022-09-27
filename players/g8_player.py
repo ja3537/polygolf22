@@ -373,11 +373,11 @@ class Player:
         # fixup target
         current_point = np.array(tuple(curr_loc)).astype(float)
         original_dist = np.linalg.norm(np.array(target_point) - current_point)
+        in_sand = self.point_in_sandtrap_mpl(current_point)
         if tuple(target_point) == self.goal:
             v = np.array(target_point) - current_point
             # Unit vector pointing from current to target
             u = v / original_dist
-            in_sand = self.point_in_sandtrap_mpl(current_point)
             if original_dist >= 20.0:
                 roll_distance = original_dist * 0.1
                 max_offset = roll_distance
@@ -394,7 +394,7 @@ class Player:
                         lowest_ev = ev_of_cur_target
                 target_point = lowest_ev_target
 
-            elif original_dist < 20 and in_sand == False:
+            elif original_dist < 20 and in_sand == False and rv[0] > 20:
                 if self.skill >= 60:
                     target_point = current_point + u * (original_dist * 1.5)
                 elif self.skill >= 40:
