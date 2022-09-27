@@ -20,6 +20,7 @@ from matplotlib.path import Path
 from shapely.geometry import Polygon as ShapelyPolygon, Point as ShapelyPoint
 from scipy.spatial.distance import cdist
 from sklearn.cluster import KMeans
+from polylabel import polylabel
 
 
 # Cached distribution
@@ -125,9 +126,6 @@ def split_polygon(golf_map: sympy.Polygon, sand_traps: List[shapely.geometry.Pol
     golf_map_with_holes = shapely.geometry.Polygon(golf_map.exterior.coords, [list(st.exterior.coords) for st in sand_traps])
 
     regions = create_vornoi_regions(golf_map_with_holes, region_num, 0.5)
-    
-    # TODO Force a center on each sandtrap to support small sandtraps
-    # TODO Use Polylabel to find the point furthest from edge to support concave traps
 
     # Find total and avg area
     avg_area_centroid = golf_map_with_holes.area/len(regions)
@@ -143,7 +141,7 @@ def split_polygon(golf_map: sympy.Polygon, sand_traps: List[shapely.geometry.Pol
 
     # add all regions together and prepare returnables
     regions.extend(st_regions)
-    centroids_dict = {(region.centroid.x, region.centroid.y): region for region in regions}
+    centroids_dict = {tuple(polylabel([region.exterior.coords])): region for region in regions}
 
     return centroids_dict
 
