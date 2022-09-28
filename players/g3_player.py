@@ -202,7 +202,7 @@ class Player(object):
 
         return ratio_of_overlapping_area
 
-    def create_vornoi_regions(self, poly: sympy.Polygon, region_num: int, point_spacing: float) -> List[shapely.geometry.Polygon]:
+    def create_vornoi_regions(self, poly: shapely.geometry.Polygon, region_num: int, point_spacing: float) -> List[shapely.geometry.Polygon]:
         points = []
         min_x, min_y, max_x, max_y = poly.bounds
 
