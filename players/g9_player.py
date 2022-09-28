@@ -230,11 +230,6 @@ class Player:
              self.conf = 0.6+ (100 - self.skill)//6 *step
         print("skill: ", self.skill, self.conf)
 
-        self.original_conf = 0.60
-        step=(0.8-0.6)/6
-        if self.skill >= 40:
-             self.original_conf = 0.6+ (100 - self.skill)//6 *step
-        print("skill: ", self.skill, self.original_conf)
 
         self.map_points_is_sand = {}
         self.sand_traps = [sympy_poly_to_shapely(sympy_poly) for sympy_poly in sand_traps]
@@ -245,16 +240,14 @@ class Player:
                 gx, gy = float(target.x), float(target.y)
                 self.goal = float(target.x), float(target.y)
                 self._initialize_map_points((gx, gy), golf_map)
-                print("inital map size 2: ", len(self.np_map_points))
                 if self.np_map_points is not None and len(self.np_map_points) > 5000:
                     global X_STEP
-                    print("before change grid size to 10x10", X_STEP, len(self.np_map_points))
                     X_STEP = 10
                     global Y_STEP
                     Y_STEP = 10
                     self.np_map_points = None
                     self._initialize_map_points((gx, gy), golf_map)
-                    print("after change grid size to 10x10", X_STEP, len(self.np_map_points))
+                    print("change grid size to 10x10")
 
                 # print(f"done init map with {len(self.np_map_points)} points")
 
@@ -404,7 +397,6 @@ class Player:
             gx, gy = float(target.x), float(target.y)
             self.goal = float(target.x), float(target.y)
             self._initialize_map_points((gx, gy), golf_map) ## initrialize at runtime? multi thread it?
-            print("inital map size 1: ", len(self.np_map_points))
             if self.np_map_points is not None and len(self.np_map_points) > 5000:
                 global X_STEP
                 X_STEP = 10
@@ -412,7 +404,7 @@ class Player:
                 Y_STEP = 10
                 self.np_map_points = None
                 self._initialize_map_points((gx, gy), golf_map)
-                print("change grid size to 10x10", len(self.np_map_points))
+                print("change grid size to 10x10")
 
 
         # Optimization to retry missed shots
@@ -420,9 +412,7 @@ class Player:
             self.num_step += 1
             self.num_miss += 1
             if self.num_miss >= 3 and self.conf <= 0.9:
-
                 self.conf += 0.05
-                print("increasing conf due to 3 or more fail, ", self.conf)
 
             return self.prev_rv
 
@@ -442,20 +432,15 @@ class Player:
             confidence -= 0.05
 
 
-        # TESTING #
         if self.num_step >= 8:
-            print("Within last shot step, using num_step:", self.num_step)
-            confidence = 0.80
+            confidence = 0.9
 
         if self.prev_rv:
             a = np.array( (float(curr_loc.x), float(curr_loc.y)) )
             b = np.array( (float(target.x), float(target.y)) )
             goal_dist = np.linalg.norm(a - b)
-            if goal_dist < (200 + self.skill) / 2:
-                print("Within last shot, using goal_dist")
+            if goal_dist < (200 + self.skill) / 2 and confidence < 0.8:
                 confidence = 0.80
-                print("Goal Dist: {} and Conf Level: {}".format(goal_dist, confidence))
-
 
 
         # fixup target
@@ -485,8 +470,6 @@ class Player:
         self.prev_rv = rv
         self.num_step += 1
         self.num_miss = 0
-        #self.conf = self.original_conf
-        #print("conf after shot: ",self.conf)
         return rv
 
 
