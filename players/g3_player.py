@@ -33,8 +33,8 @@ PUTTING_CONFIDENCE = 0.1
 """ Constants to adjust heuristic cost for scored points in A* search """
 FIXED_SANDTRAP_COST = 0.5                   # estimated additional shots required by entering sand trap
 REMAINING_SHOTS_WEIGHT = 2                  # weight of estimated number of remaining shots from point (higher avoid points far from goal)
-SAND_TRAP_WEIGHT = 1                        # weight of point being in a sand trap (high avoids entering sand traps)
-REACHABLE_POINTS_WEIGHT = 1                 # weight of nearby sand vs. grass (high avoids areas with lots of nearby grass)
+SAND_TRAP_WEIGHT = 0.5                        # weight of point being in a sand trap (high avoids entering sand traps)
+REACHABLE_POINTS_WEIGHT = 0.01                 # weight of nearby sand vs. grass (high avoids areas with lots of nearby grass)
 SAND_TRAP_IN_SPLASH_ZONE_WEIGHT = 3         # weight of target splash zone containing sand traps (high avoids splash zones containing sand traps)
 
 """ Constants to adjust backup logic that handles rolling """
@@ -219,11 +219,11 @@ class Player(object):
                     points.append([x, y])
 
         # Add random points to distribution to help clustering accuracy
-        while len(points) < 100 * region_num:
-            x, y = (random.uniform(min_x, max_x), random.uniform(min_y, max_y))
-            pt = shapely.geometry.Point(x, y)
-            if poly.contains(pt):
-                points.append([x, y])
+        # while len(points) < 100 * region_num:
+        #     x, y = (random.uniform(min_x, max_x), random.uniform(min_y, max_y))
+        #     pt = shapely.geometry.Point(x, y)
+        #     if poly.contains(pt):
+        #         points.append([x, y])
 
         # Cluster the random points into groups using kmeans
         np_points = np.array(points)
@@ -244,6 +244,8 @@ class Player(object):
                 flattened_regions.extend(list(region.geoms))
             elif region.geom_type == 'Polygon':
                 flattened_regions.append(region)
+
+        flattened_regions = [r for r in flattened_regions if r.length/(r.area**(1/2)) < 15]
 
         return flattened_regions
 
