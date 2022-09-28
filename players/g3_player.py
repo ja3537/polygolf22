@@ -113,7 +113,7 @@ class Player(object):
             self.shapely_map = shapely.geometry.Polygon(golf_map.vertices)
             self.shapely_sand_traps = [shapely.geometry.Polygon(st.vertices) for st in sand_traps]
             self.all_sandtraps = shapely.ops.unary_union(self.shapely_sand_traps)
-            self.centroids_dict = self.split_polygon(5)
+            self.centroids_dict = self.split_polygon(50)
             
             # Then dump the precomputation for the next run
             with open(precomp_path, 'wb') as f:
@@ -281,9 +281,6 @@ class Player(object):
 
         # add all regions together and prepare returnables
         regions.extend(st_regions)
-        for region in regions:
-            print(region.wkt)
-            print(polylabel([region.exterior.coords]))
 
         region_centers = [tuple(polylabel([region.exterior.coords])) for region in regions]
 
