@@ -19,7 +19,7 @@ from sympy.geometry import Polygon, Point2D
 from matplotlib.path import Path
 from shapely.geometry import Polygon as ShapelyPolygon, Point as ShapelyPoint
 from scipy.spatial.distance import cdist
-from sklearn.cluster import KMeans
+from faiss import Kmeans
 from polylabel import polylabel
 
 
@@ -86,14 +86,16 @@ def create_vornoi_regions(map: sympy.Polygon, region_num: int, point_spacing: fl
         for y in np.arange(min_y, max_y, point_spacing):
             pt = shapely.geometry.Point(x, y)
             if map.contains(pt):
-                points.append(pt)
+                points.append([x, y])
+
 
     # Cluster the random points into groups using kmeans
-    points_df = pd.DataFrame([[pt.x, pt.y] for pt in points], columns=['x', 'y'])
-    kmeans = KMeans(n_clusters=region_num, init='k-means++').fit(points_df)
+    np_points = np.array(points)
+    kmeans = Kmeans(np_points.shape[1], region_num)
+    kmeans.train(np_points.astype(np.float32))
 
     # Generate a voronoi diagram from the centers of the generated regions
-    center_points = shapely.geometry.MultiPoint(kmeans.cluster_centers_)
+    center_points = shapely.geometry.MultiPoint(kmeans.centroids)
     regions = shapely.ops.voronoi_diagram(center_points, edges=False)
 
     # Intersect the generated regions with the given map
