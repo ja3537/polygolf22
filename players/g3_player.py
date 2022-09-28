@@ -119,7 +119,7 @@ class Player(object):
             self.shapely_map = shapely.geometry.Polygon(golf_map.vertices)
             self.shapely_sand_traps = [shapely.geometry.Polygon(st.vertices) for st in sand_traps]
             self.all_sandtraps = shapely.ops.unary_union(self.shapely_sand_traps)
-            self.centroids_dict = self.split_polygon(50)
+            self.centroids_dict = self.split_polygon(5)
             
             # Then dump the precomputation for the next run
             with open(precomp_path, 'wb') as f:
@@ -130,7 +130,7 @@ class Player(object):
             plt.figure(dpi=200)
             plt.axis('equal')
             plt.plot(*self.shapely_map.exterior.xy)
-            plt.scatter([r['poly'].centroid.x for r in self.centroids_dict.values()], [r['poly'].centroid.y for r in self.centroids_dict.values()], color='red')
+            plt.scatter([r[0] for r in self.centroids_dict.keys()], [r[1] for r in self.centroids_dict.keys()], color='red')
             for region in self.centroids_dict.values():
                 plt.plot(*region['poly'].exterior.xy)
             plt.gca().invert_yaxis()
@@ -214,6 +214,12 @@ class Player(object):
                 if poly.contains(pt):
                     points.append([x, y])
 
+        while len(points) < 100 * region_num:
+            x, y = (random.uniform(min_x, max_x), random.uniform(min_y, max_y))
+            pt = shapely.geometry.Point(x, y)
+            if poly.contains(pt):
+                points.append([x, y])
+
 
         # Cluster the random points into groups using kmeans
         np_points = np.array(points)
@@ -225,13 +231,13 @@ class Player(object):
         regions = shapely.ops.voronoi_diagram(center_points, edges=False)
 
         # Intersect the generated regions with the given map
-        regions = [region.intersection(poly) for region in regions.geoms]
+        regions = [r for r in [poly.intersection(region) for region in regions.geoms] if not r.is_empty]
 
         # Break possibly split regions into separate polygons
         flattened_regions = []
         for region in regions:
             if region.geom_type == 'MultiPolygon':
-                flattened_regions.extend(region.geoms)
+                flattened_regions.extend(list(region.geoms))
             elif region.geom_type == 'Polygon':
                 flattened_regions.append(region)
 
@@ -253,7 +259,8 @@ class Player(object):
 
         golf_map_with_holes = shapely.geometry.Polygon(self.shapely_map.exterior.coords, [list(st.exterior.coords) for st in self.shapely_sand_traps])
 
-        regions = self.create_vornoi_regions(golf_map_with_holes, region_num, POINT_SPACING)
+        grass_regions = int(golf_map_with_holes.area/self.shapely_map.area * region_num)
+        regions = self.create_vornoi_regions(golf_map_with_holes, grass_regions, POINT_SPACING)
 
         # Find total and avg area
         avg_area_centroid = golf_map_with_holes.area/len(regions)
@@ -261,7 +268,7 @@ class Player(object):
         st_regions = []
         for st in self.shapely_sand_traps:
             num_points = max(floor(st.area/avg_area_centroid), 1)
-            # If there are 1 more or points run k means else use already exsisting geometry
+        # If there are 1 more or points run k means else use already exsisting geometry
             if num_points > 1:
                 st_regions.extend(self.create_vornoi_regions(st, num_points, POINT_SPACING))
             else:
@@ -269,6 +276,9 @@ class Player(object):
 
         # add all regions together and prepare returnables
         regions.extend(st_regions)
+        for region in regions:
+            print(region.wkt)
+            print(polylabel([region.exterior.coords]))
 
         region_centers = [tuple(polylabel([region.exterior.coords])) for region in regions]
 
