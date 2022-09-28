@@ -17,8 +17,8 @@ from scipy.spatial.distance import cdist
 # Cached distribution
 DIST = scipy_stats.norm(0, 1)
 SAND_DIST = scipy_stats.norm(0, 2)
-X_STEP = 10
-Y_STEP = 10
+X_STEP = 5
+Y_STEP = 5
 
 
 @functools.lru_cache()
@@ -222,11 +222,11 @@ class Player:
         self.max_sand_ddist = scipy_stats.norm(max_dist/2, 2 * max_dist / self.skill)
 
         # Conf level
-        self.conf = 0.6
-        step=(0.8-0.6)/6
-        if self.skill >= 40:
-             self.conf = 0.6+ (100 - self.skill)//6 *step
-        print("skill: ", self.skill, self.conf)
+        self.conf = 0.60
+        # step=(0.8-0.6)/6
+        # if self.skill >= 40:
+        #      self.conf = 0.6+ (100 - self.skill)//6 *step
+        # print("skill: ", self.skill, self.conf)
 
         self.map_points_is_sand = {}
         self.sand_traps = [sympy_poly_to_shapely(sympy_poly) for sympy_poly in sand_traps]
@@ -325,6 +325,7 @@ class Player:
             
             # Add adjacent points to heap
             reachable_points, goal_dists = self.numpy_adjacent_and_dist(next_p, conf)
+
             for i in range(len(reachable_points)):
                 candidate_point = tuple(reachable_points[i])
                 goal_dist = goal_dists[i]
@@ -355,6 +356,8 @@ class Player:
         self.np_map_points = np.array(np_map_points)
         self.np_goal_dist = cdist(self.np_map_points, np.array([np.array(self.goal)]), 'euclidean')
         self.np_goal_dist = self.np_goal_dist.flatten()
+
+        print("Length of map pts:", len(self.np_map_points))
 
     def is_in_sand(self, point: sympy.geometry.Point2D):
         if (type(point) == np.ndarray):
@@ -390,6 +393,7 @@ class Player:
         self.current_shot_in_sand = self.is_in_sand(curr_loc)
         # print(f"Current shot in sand: {self.current_shot_in_sand}")
 
+
         target_point = None
         confidence = self.conf
         cl = float(curr_loc.x), float(curr_loc.y)
@@ -400,6 +404,30 @@ class Player:
             # print(f"turn # {score} searching with {confidence} confidence")
             target_point = self.next_target(cl, target, confidence)
             confidence -= 0.05
+
+
+        # TESTING #
+        if self.prev_rv:
+
+            a = np.array( (float(curr_loc.x), float(curr_loc.y)) )
+            b = np.array( (float(target.x), float(target.y)) )
+            goal_dist = np.linalg.norm(a - b)
+
+
+            print("Goal Dist: {} and Conf Level: {}".format(goal_dist, confidence))
+            
+
+            if goal_dist < (200 + self.skill) / 2:
+                print("Within last shot")
+                confidence = 0.80
+            # euc dist to target / prev length
+            # total shots so far + above number > 10 && > 0.6:
+            # decrease conf level
+
+            # if its close && < 0.9:
+            # increase 
+
+
 
         # fixup target
         current_point = np.array(tuple(curr_loc)).astype(float)
@@ -429,34 +457,3 @@ class Player:
         return rv
 
 
-# === Unit Tests ===
-
-def test_reachable():
-    current_point = Point2D(0, 0, evaluate=False)
-    target_point = Point2D(0, 250, evaluate=False)
-    player = Player(50, 0xdeadbeef, None)
-    
-    assert not player.reachable_point(current_point, target_point, 0.80)
-
-
-def test_splash_zone_within_polygon():
-    poly = Polygon((0,0), (0, 300), (300, 300), (300, 0), evaluate=False)
-
-    current_point = Point2D(0, 0, evaluate=False)
-
-    # Just checking polygons inside and outside
-    inside_target_point = Point2D(150, 150, evaluate=False)
-    outside_target_point = Point2D(299, 100, evaluate=False)
-
-    player = Player(50, 0xdeadbeef, None)
-    assert player.splash_zone_within_polygon(current_point, inside_target_point, poly, 0.8)
-    assert not player.splash_zone_within_polygon(current_point, outside_target_point, poly, 0.8)
-
-
-def test_poly_to_points():
-    poly = Polygon((0,0), (0, 10), (10, 10), (10, 0))
-    points = set(poly_to_points(poly))
-    for x in range(1, 10):
-        for y in range(1, 10):
-            assert (x,y) in points
-    assert len(points) == 81
