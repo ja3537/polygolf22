@@ -471,3 +471,25 @@ class Player:
         self.num_step += 1
         self.num_miss = 0
         return rv
+
+def test_reachable():
+    current_point = Point2D(0, 0, evaluate=False)
+    target_point = Point2D(0, 250, evaluate=False)
+    player = Player(50, 0xdeadbeef, None)
+    assert not player.reachable_point(current_point, target_point, 0.80)
+def test_splash_zone_within_polygon():
+    poly = Polygon((0,0), (0, 300), (300, 300), (300, 0), evaluate=False)
+    current_point = Point2D(0, 0, evaluate=False)
+    # Just checking polygons inside and outside
+    inside_target_point = Point2D(150, 150, evaluate=False)
+    outside_target_point = Point2D(299, 100, evaluate=False)
+    player = Player(50, 0xdeadbeef, None)
+    assert player.splash_zone_within_polygon(current_point, inside_target_point, poly, 0.8)
+    assert not player.splash_zone_within_polygon(current_point, outside_target_point, poly, 0.8)
+def test_poly_to_points():
+    poly = Polygon((0,0), (0, 10), (10, 10), (10, 0))
+    points = set(poly_to_points(poly))
+    for x in range(1, 10):
+        for y in range(1, 10):
+            assert (x,y) in points
+    assert len(points) == 81
