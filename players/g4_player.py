@@ -19,7 +19,7 @@ from scipy.spatial.distance import cdist
 DIST = scipy_stats.norm(0, 1)
 X_STEP = 5.0
 STEP_DIFF = 0.5  # For adaptive sampling. Reduces step size by this amt each iter.
-ADAPT_MAX_PTS = 12000  # Adaptive sampling. Max total num of points
+ADAPT_MAX_PTS = 20000  # Adaptive sampling. Max total num of points
 
 NEARBY_DIST = 100
 
@@ -208,6 +208,7 @@ class Player:
         self.shapely_poly = sympy_poly_to_shapely(golf_map)
         init_step_size = X_STEP  # So that first line of while loop can increment this
 
+        # Select step size based on total num of points
         total_pts = 0
         while total_pts < ADAPT_MAX_PTS:
             pp = list(poly_to_points(golf_map, init_step_size))
@@ -233,7 +234,7 @@ class Player:
             print(f"Step size: {init_step_size}, Total number of points: {total_pts}")
             init_step_size = round(init_step_size - STEP_DIFF, 1)
 
-        init_step_size = round(init_step_size + 2 * STEP_DIFF, 1)
+        init_step_size = round(init_step_size + 2 * STEP_DIFF, 1)  # Select step size from before while loop broke
         print(f"Selecting step size: {init_step_size}")
 
         pp = list(poly_to_points(golf_map, init_step_size))
@@ -259,17 +260,6 @@ class Player:
         self.np_map_points = np.array(np_map_points)
         self.np_goal_dist = cdist(self.np_map_points, np.array([np.array(self.goal)]), 'euclidean')
         self.np_goal_dist = self.np_goal_dist.flatten()
-
-        # Check for total and avg reachable pts
-        reachable_pts = []
-        for idx in range(10):
-            pt = np_map_points[np.random.randint(0, len(np_map_points))]
-            reachable_points, _, _ = self.numpy_adjacent_and_dist(
-                point=tuple(pt.tolist()), conf=0.9, mode='max', trapped=False)
-            reachable_pts.append(reachable_points.shape[0])
-
-        avg_reachable_pts = sum(reachable_pts) / len(reachable_pts)
-        print(f"Step size: {init_step_size}, Average num of reachable pts: {int(avg_reachable_pts)}\n")
 
         end = time.time()
         print("Execution time - _initialize_map_points():", (end - start) * 10 ** 3, "ms")
