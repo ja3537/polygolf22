@@ -27,7 +27,7 @@ POINT_SPACING = 1
 """ Constants to adjust confidence based on skill level """
 HIGH_SKILL_CONFIDENCE = 0.90
 LOW_SKILL_CONFIDENCE = 0.85
-SKILL_CONFIDENCE_THRESHHOLD = 40
+SKILL_CONFIDENCE_THRESHHOLD = 50
 PUTTING_CONFIDENCE = 0.1
 
 """ Constants to adjust heuristic cost for scored points in A* search """
@@ -154,7 +154,7 @@ class Player(object):
 
         # Confidence level
         self.confidence = HIGH_SKILL_CONFIDENCE
-        if self.skill <= SKILL_CONFIDENCE_THRESHHOLD:
+        if self.skill < SKILL_CONFIDENCE_THRESHHOLD:
             self.confidence = LOW_SKILL_CONFIDENCE
 
     # Taken directly from 2021_G2
