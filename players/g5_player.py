@@ -478,7 +478,10 @@ class Player:
                 self.logger.warning(
                     "Compensated shot is longer than max distance rating"
                 )
-            return (planned_distance, planned_angle)
+            # Take a small shot towards the center of the tile
+            dx = cx - curr_x
+            dy = cy - curr_y
+            return to_polar(dx, dy)
 
         return (distance, angle)
 
