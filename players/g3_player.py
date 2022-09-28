@@ -113,41 +113,6 @@ def create_vornoi_regions(map: sympy.Polygon, region_num: int, point_spacing: fl
 
     return flattened_regions
       
-          
-def split_polygon(golf_map: sympy.Polygon, sand_traps: List[shapely.geometry.Polygon], region_num: int) -> Dict[Tuple[float, float], shapely.geometry.Polygon]:
-    """ Split a given Golf Map into regions of roughly equal size.
-    Based on an algorithm described by Paul Ramsey: http://blog.cleverelephant.ca/2018/06/polygon-splitting.html
-
-    Args:
-        golf_map (shapely.geometry.Polygon): The Golf Map to split into equal sized regions
-        sand_traps (shapely.geometry.Polygon): A list of Sand Traps contained within the Golf Map 
-        regions (int): The number of roughly equal sized regions to split the map into
-
-    Returns:
-        Dict[Tuple[float, float], shapely.geometry.Polygon]  Returns a dict with region centroid x/y tuples as keys and Shapely Polygons as values
-    """
-
-    golf_map_with_holes = shapely.geometry.Polygon(golf_map.exterior.coords, [list(st.exterior.coords) for st in sand_traps])
-
-    regions = create_vornoi_regions(golf_map_with_holes, region_num, POINT_SPACING)
-
-    # Find total and avg area
-    avg_area_centroid = golf_map_with_holes.area/len(regions)
-
-    st_regions = []
-    for st in sand_traps:
-        num_points = max(floor(st.area/avg_area_centroid), 1)
-        # If there are 1 more or points run k means else use already exsisting geometry
-        if num_points > 1:
-            st_regions.extend(create_vornoi_regions(st, num_points, POINT_SPACING))
-        else:
-            st_regions.append(st)
-
-    # add all regions together and prepare returnables
-    regions.extend(st_regions)
-    centroids_dict = {tuple(polylabel([region.exterior.coords])): region for region in regions}
-
-    return centroids_dict
 
 class Player(object):
     def __init__(self, skill: int, rng: np.random.Generator, logger: logging.Logger, golf_map: sympy.Polygon, start: sympy.geometry.Point2D, target: sympy.geometry.Point2D, sand_traps, map_path: str, precomp_dir: str) -> None:
@@ -168,25 +133,27 @@ class Player(object):
         precomp_path = os.path.join(precomp_dir, "{}.pkl".format(map_path))
         if os.path.isfile(precomp_path):
             with open(precomp_path, "rb") as f:
-                self.shapely_map, self.shapely_sand_traps, self.centroids_dict = pickle.load(f)
+                self.shapely_map, self.shapely_sand_traps, self.all_sandtraps, self.centroids_dict = pickle.load(f)
         else:
             # If no the map has not been precomputed, do so
             self.shapely_map = shapely.geometry.Polygon(golf_map.vertices)
             self.shapely_sand_traps = [shapely.geometry.Polygon(st.vertices) for st in sand_traps]
-            self.centroids_dict = split_polygon(self.shapely_map, self.shapely_sand_traps, 50)
+            self.all_sandtraps = shapely.ops.unary_union(self.shapely_sand_traps)
+            self.centroids_dict = {}
+            self.centroids_dict = self.split_polygon(50)
             
             # Then dump the precomputation for the next run
             with open(precomp_path, 'wb') as f:
-                pickle.dump([self.shapely_map, self.shapely_sand_traps, self.centroids_dict], f)
+                pickle.dump([self.shapely_map, self.shapely_sand_traps, self.all_sandtraps, self.centroids_dict], f)
             
             # And save an image of the generated map
             regions_image_path = os.path.join(precomp_dir, "{}-regions.jpg".format(map_path))
             plt.figure(dpi=200)
             plt.axis('equal')
             plt.plot(*self.shapely_map.exterior.xy)
-            plt.scatter([r.centroid.x for r in self.centroids_dict.values()], [r.centroid.y for r in self.centroids_dict.values()], color='red')
+            plt.scatter([r['poly'].centroid.x for r in self.centroids_dict.values()], [r['poly'].centroid.y for r in self.centroids_dict.values()], color='red')
             for region in self.centroids_dict.values():
-                plt.plot(*region.exterior.xy)
+                plt.plot(*region['poly'].exterior.xy)
             plt.gca().invert_yaxis()
             plt.savefig(regions_image_path)
                 
@@ -202,11 +169,10 @@ class Player(object):
         self.prev_rv = None
         
         self.centroids = list(self.centroids_dict.keys())
-        self.all_sandtraps = shapely.ops.unary_union(self.shapely_sand_traps)
 
         # Add start and end points to centroids and centroids_dict
-        self.centroids_dict[self.start] = None
-        self.centroids_dict[self.goal] = None
+        self.centroids_dict[self.start] = {'poly': None, 'is_in_sand': self.is_point_in_sand(self.start)}
+        self.centroids_dict[self.goal] = {'poly': None, 'is_in_sand': self.is_point_in_sand(self.goal)}
         self.centroids.append(self.goal)
 
         # Cached data
@@ -262,11 +228,54 @@ class Player(object):
                                               self.is_point_in_sand(current_point),
                                               self.is_point_in_sand(target_point))
 
-        corresp_region = self.centroids_dict[target_point]
+        corresp_region = self.centroids_dict[target_point]['poly']
         splash_zone_shapely = ShapelyPolygon(splash_zone_poly_points)
         ratio_of_overlapping_area = corresp_region.intersection(splash_zone_shapely).area / corresp_region.area
 
         return ratio_of_overlapping_area
+
+
+    def split_polygon(self, region_num: int) -> Dict[Tuple[float, float], Dict[str, any]]:
+        """ Split a given Golf Map into regions of roughly equal size.
+        Based on an algorithm described by Paul Ramsey: http://blog.cleverelephant.ca/2018/06/polygon-splitting.html
+
+        Args:
+            golf_map (shapely.geometry.Polygon): The Golf Map to split into equal sized regions
+            sand_traps (shapely.geometry.Polygon): A list of Sand Traps contained within the Golf Map 
+            regions (int): The number of roughly equal sized regions to split the map into
+
+        Returns:
+            Dict[Tuple[float, float], Dict[str, any]]  Returns a dict with region centroid x/y tuples as keys and dicts as values
+        """
+
+        golf_map_with_holes = shapely.geometry.Polygon(self.shapely_map.exterior.coords, [list(st.exterior.coords) for st in self.shapely_sand_traps])
+
+        regions = create_vornoi_regions(golf_map_with_holes, region_num, POINT_SPACING)
+
+        # Find total and avg area
+        avg_area_centroid = golf_map_with_holes.area/len(regions)
+
+        st_regions = []
+        for st in self.shapely_sand_traps:
+            num_points = max(floor(st.area/avg_area_centroid), 1)
+            # If there are 1 more or points run k means else use already exsisting geometry
+            if num_points > 1:
+                st_regions.extend(create_vornoi_regions(st, num_points, POINT_SPACING))
+            else:
+                st_regions.append(st)
+
+        # add all regions together and prepare returnables
+        regions.extend(st_regions)
+
+        region_centers = [tuple(polylabel([region.exterior.coords])) for region in regions]
+
+
+        centroids_dict = {
+            region_center: {'poly': region, 'is_in_sand': self.is_point_in_sand(region_center)} 
+            for region_center, region in zip(region_centers, regions)
+        }
+
+        return centroids_dict
 
 
     def numpy_adjacent_and_dist(self, point: Tuple[float, float], conf: float):
@@ -358,12 +367,19 @@ class Player(object):
         self.np_map_points = np.array(np_map_points)
         self.np_goal_dist = cdist(self.np_map_points, np.array([np.array(self.goal)]), 'euclidean')
         self.np_goal_dist = self.np_goal_dist.flatten()
+        print('done initializing map points')
 
 
-    def is_point_in_sand(self, current_point: Tuple[float, float])-> bool:
-        """Helper function to check whether the current point is within a sandtrap post-factum after the shot"""
-        return self.all_sandtraps.contains(shapely.geometry.Point(current_point))
-        
+    def is_point_in_sand(self, point: Tuple[float, float])-> bool:
+        """Helper function to check whether a given point is within a sandtrap"""
+
+        if point in self.centroids_dict:
+            return self.centroids_dict[point]['is_in_sand']
+
+        return self.all_sandtraps.contains(shapely.geometry.Point(point))
+
+
+
     def play(self, score: int, golf_map: sympy.Polygon, target: sympy.geometry.Point2D, sand_traps, curr_loc: sympy.geometry.Point2D, prev_loc: sympy.geometry.Point2D, prev_landing_point: sympy.geometry.Point2D, prev_admissible: bool) -> Tuple[float, float]:
         """Function which based n current game state returns the distance and angle, the shot must be played 
 
