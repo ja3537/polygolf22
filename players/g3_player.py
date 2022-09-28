@@ -23,6 +23,8 @@ from faiss import Kmeans
 from polylabel import polylabel
 
 
+POINT_SPACING = 1
+
 # Cached distribution
 DIST = scipy_stats.norm(0, 1)
 
@@ -127,7 +129,7 @@ def split_polygon(golf_map: sympy.Polygon, sand_traps: List[shapely.geometry.Pol
 
     golf_map_with_holes = shapely.geometry.Polygon(golf_map.exterior.coords, [list(st.exterior.coords) for st in sand_traps])
 
-    regions = create_vornoi_regions(golf_map_with_holes, region_num, 0.5)
+    regions = create_vornoi_regions(golf_map_with_holes, region_num, POINT_SPACING)
 
     # Find total and avg area
     avg_area_centroid = golf_map_with_holes.area/len(regions)
@@ -137,7 +139,7 @@ def split_polygon(golf_map: sympy.Polygon, sand_traps: List[shapely.geometry.Pol
         num_points = max(floor(st.area/avg_area_centroid), 1)
         # If there are 1 more or points run k means else use already exsisting geometry
         if num_points > 1:
-            st_regions.extend(create_vornoi_regions(st, num_points, 0.1))
+            st_regions.extend(create_vornoi_regions(st, num_points, POINT_SPACING))
         else:
             st_regions.append(st)
 
