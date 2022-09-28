@@ -431,9 +431,15 @@ class Player(object):
         v = np.array(target_point) - current_point # Vector from current to target
         u = v / original_dist # Unit vector pointing from current to target
 
+        print('\n')
+        print(f"Current location: {round(cl[0], 2)}, {round(cl[1], 2)}")
+        print(F"Target point: {round(original_target[0], 2)}, {round(original_target[1], 2)}")
+
+        # Back up target to account for roll
         if original_dist >= 20.0:
             max_roll = (original_dist / 1.1) * 0.1
-            max_offset = max_roll if tuple(target_point) != self.goal else max_roll * 0.5
+            # If target is goal, try to overshoot by 1 meter to roll into the hole
+            max_offset = max_roll if tuple(target_point) != self.goal else max_roll - 1
             offset = 0
             
             # If target point is in a sand trap, try backing up, up to 10% more, to avoid
@@ -445,13 +451,17 @@ class Player(object):
                 dist = original_dist - min(offset, max_offset)
                 target_point = current_point + u * dist
 
-
-            print('\n')
-            print(f"Current location: {round(cl[0], 2)}, {round(cl[1], 2)}")
-            print(F"Original target point: {round(original_target[0], 2)}, {round(original_target[1], 2)}")
             print(f"Offset: {round(original_dist - dist, 2)} (max allowed offset: {round(max_offset, 2)})")
+
+        # If target is goal and we are putting, overshoot by 10% so we roll into the hole
+        elif tuple(target_point) == self.goal:
+            dist = original_dist * 1.1
+            target_point = current_point + u * dist
+
+        if tuple(target_point) != original_target:    
             print(f"Corrected target point: {round(target_point[0], 2)}, {round(target_point[1], 2)}")
-            print('\n')
+
+        print('\n')
 
         cx, cy = current_point
         tx, ty = target_point
