@@ -189,7 +189,6 @@ class Player(object):
         splash_zone_shapely = ShapelyPolygon(splash_zone_poly_points)
         return splash_zone_shapely.intersection(self.shapely_map).area / splash_zone_shapely.area
 
-    # Find whether the splash zone is within the region we're aiming at (ONLY FOR POINTS IN REGION DICT!!!)
     def pct_splash_zone_within_region(self, current_point: Tuple[float, float], target_point: Tuple[float, float], conf: float) -> float:
         distance = np.linalg.norm(np.array(current_point).astype(float) - np.array(target_point).astype(float))
         cx, cy = current_point
@@ -219,12 +218,12 @@ class Player(object):
                 if poly.contains(pt):
                     points.append([x, y])
 
+        # Add random points to distribution to help clustering accuracy
         while len(points) < 100 * region_num:
             x, y = (random.uniform(min_x, max_x), random.uniform(min_y, max_y))
             pt = shapely.geometry.Point(x, y)
             if poly.contains(pt):
                 points.append([x, y])
-
 
         # Cluster the random points into groups using kmeans
         np_points = np.array(points)
@@ -247,7 +246,6 @@ class Player(object):
                 flattened_regions.append(region)
 
         return flattened_regions
-
 
     def split_polygon(self, region_num: int) -> Dict[Tuple[float, float], Dict[str, any]]:
         """ Split a given Golf Map into regions of roughly equal size.
@@ -291,7 +289,6 @@ class Player(object):
         }
 
         return centroids_dict
-
 
     def numpy_adjacent_and_dist(self, point: Tuple[float, float], conf: float):
         shooting_from_st = self.is_point_in_sand(point)
@@ -386,7 +383,6 @@ class Player(object):
         self.np_goal_dist = cdist(self.np_map_points, np.array([np.array(self.goal)]), 'euclidean')
         self.np_goal_dist = self.np_goal_dist.flatten()
 
-
     def is_point_in_sand(self, point: Tuple[float, float])-> bool:
         """Helper function to check whether a given point is within a sandtrap"""
 
@@ -400,7 +396,6 @@ class Player(object):
         self.point_in_sand_cache[point] = is_in_sand
 
         return is_in_sand
-
 
     def play(self, score: int, golf_map: sympy.Polygon, target: sympy.geometry.Point2D, sand_traps, curr_loc: sympy.geometry.Point2D, prev_loc: sympy.geometry.Point2D, prev_landing_point: sympy.geometry.Point2D, prev_admissible: bool) -> Tuple[float, float]:
         """Function which based n current game state returns the distance and angle, the shot must be played 
@@ -510,7 +505,6 @@ class Player(object):
         rv = distance, angle
         self.prev_rv = rv
         return rv
-
 
     # Based on function of same name from 2021_G2
     class ScoredPoint(object):
