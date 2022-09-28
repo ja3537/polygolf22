@@ -216,6 +216,7 @@ class Player:
         self.goal = None
         self.prev_rv = None
         self.num_step = 0
+        self.num_miss = 0
 
         # Cached data
         max_dist = 200 + self.skill
@@ -229,6 +230,12 @@ class Player:
              self.conf = 0.6+ (100 - self.skill)//6 *step
         print("skill: ", self.skill, self.conf)
 
+        self.original_conf = 0.60
+        step=(0.8-0.6)/6
+        if self.skill >= 40:
+             self.original_conf = 0.6+ (100 - self.skill)//6 *step
+        print("skill: ", self.skill, self.original_conf)
+
         self.map_points_is_sand = {}
         self.sand_traps = [sympy_poly_to_shapely(sympy_poly) for sympy_poly in sand_traps]
 
@@ -238,9 +245,10 @@ class Player:
                 gx, gy = float(target.x), float(target.y)
                 self.goal = float(target.x), float(target.y)
                 self._initialize_map_points((gx, gy), golf_map)
+                print("inital map size 2: ", len(self.np_map_points))
                 if self.np_map_points is not None and len(self.np_map_points) > 5000:
-                    print("before change grid size to 10x10", X_STEP, len(self.np_map_points))
                     global X_STEP
+                    print("before change grid size to 10x10", X_STEP, len(self.np_map_points))
                     X_STEP = 10
                     global Y_STEP
                     Y_STEP = 10
@@ -396,6 +404,7 @@ class Player:
             gx, gy = float(target.x), float(target.y)
             self.goal = float(target.x), float(target.y)
             self._initialize_map_points((gx, gy), golf_map) ## initrialize at runtime? multi thread it?
+            print("inital map size 1: ", len(self.np_map_points))
             if self.np_map_points is not None and len(self.np_map_points) > 5000:
                 global X_STEP
                 X_STEP = 10
@@ -409,6 +418,12 @@ class Player:
         # Optimization to retry missed shots
         if not prev_admissible and self.prev_rv is not None:
             self.num_step += 1
+            self.num_miss += 1
+            if self.num_miss >= 3 and self.conf <= 0.9:
+
+                self.conf += 0.05
+                print("increasing conf due to 3 or more fail, ", self.conf)
+
             return self.prev_rv
 
         self.current_shot_in_sand = self.is_in_sand(curr_loc)
@@ -469,7 +484,9 @@ class Player:
         rv = curr_loc.distance(Point2D(target_point, evaluate=False)), angle
         self.prev_rv = rv
         self.num_step += 1
-        #print(self.num_step)
+        self.num_miss = 0
+        #self.conf = self.original_conf
+        #print("conf after shot: ",self.conf)
         return rv
 
 
