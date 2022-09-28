@@ -5,7 +5,6 @@ import random
 import shapely.geometry, shapely.ops
 import logging
 import matplotlib.pyplot as plt
-import pathlib
 from math import floor
 import os
 import pickle
@@ -24,6 +23,10 @@ from polylabel import polylabel
 
 
 POINT_SPACING = 1
+HIGH_SKILL_CONFIDENCE = 0.95
+LOW_SKILL_CONFIDENCE = 0.75
+SKILL_CONFIDENCE_THRESHHOLD = 40
+PUTTING_CONFIDENCE = 0.1
 
 # Cached distribution
 DIST = scipy_stats.norm(0, 1)
@@ -33,6 +36,7 @@ DIST = scipy_stats.norm(0, 1)
 def standard_ppf(conf: float) -> float:
     return DIST.ppf(conf)
 
+# Taken directly from 2021_G2
 def spread_points(current_point: Tuple[float, float], angles: np.array, distance: float, reverse: bool) -> np.array:
     curr_x, curr_y = current_point
     if reverse:
@@ -41,9 +45,9 @@ def spread_points(current_point: Tuple[float, float], angles: np.array, distance
     ys = np.sin(angles) * distance + curr_y
     return np.column_stack((xs, ys))
 
-
+# Based on function of same name from 2021_G2
 def splash_zone(distance: float, angle: float, conf: float, skill: int, current_point: Tuple[float, float],
-                is_sand, is_sand_target) -> np.array:
+                is_sand: bool, is_sand_target: bool) -> np.array:
     conf_points = np.linspace(1 - conf, conf, 5)
     st_coeff = 2 if is_sand else 1
     distances = np.vectorize(standard_ppf)(conf_points) * st_coeff * (distance / skill) + distance
@@ -63,14 +67,14 @@ def splash_zone(distance: float, angle: float, conf: float, skill: int, current_
     current_point = np.array([current_point])
     return np.concatenate((current_point, top_arc, current_point))
 
-
+# Taken directly from 2021_G2
 def sympy_poly_to_mpl(sympy_poly: Polygon) -> Path:
     """Helper function to convert sympy Polygon to matplotlib Path object"""
     v = sympy_poly.vertices
     v.append(v[0])
     return Path(v, closed=True)
 
-
+# Taken directly from 2021_G2
 def sympy_poly_to_shapely(sympy_poly: Polygon) -> ShapelyPolygon:
     """Helper function to convert sympy Polygon to shapely Polygon object"""
     v = sympy_poly.vertices
@@ -129,6 +133,7 @@ class Player(object):
             precomp_dir (str): Directory path to store/load precomputation
         """
 
+        # Initialize variables required for precomputing
         self.centroids_dict = {}
         self.point_in_sand_cache = {}
 
@@ -138,7 +143,7 @@ class Player(object):
             with open(precomp_path, "rb") as f:
                 self.shapely_map, self.shapely_sand_traps, self.all_sandtraps, self.centroids_dict = pickle.load(f)
         else:
-            # If no the map has not been precomputed, do so
+            # If the map has not been precomputed, do so
             self.shapely_map = shapely.geometry.Polygon(golf_map.vertices)
             self.shapely_sand_traps = [shapely.geometry.Polygon(st.vertices) for st in sand_traps]
             self.all_sandtraps = shapely.ops.unary_union(self.shapely_sand_traps)
@@ -159,17 +164,23 @@ class Player(object):
             plt.gca().invert_yaxis()
             plt.savefig(regions_image_path)
                 
-
         self.skill = skill
         self.rng = rng
         self.logger = logger
+        self.start = float(start.x), float(start.y)
+        self.goal = float(target.x), float(target.y)
+
         self.np_map_points = None
         self.mpl_poly = None
         self.shapely_poly = None
-        self.start = float(start.x), float(start.y)
-        self.goal = float(target.x), float(target.y)
         self.prev_rv = None
-        
+
+        # Record maxmimum distances and their potential distributions
+        self.max_dist = 200 + self.skill
+        self.max_ddist = scipy_stats.norm(self.max_dist, self.max_dist / self.skill)
+        self.max_dist_st = self.max_dist/2
+        self.max_ddist_st = scipy_stats.norm(self.max_dist_st, 2 * self.max_dist_st / self.skill)
+
         self.centroids = list(self.centroids_dict.keys())
 
         # Add start and end points to centroids and centroids_dict
@@ -177,34 +188,23 @@ class Player(object):
         self.centroids_dict[self.goal] = {'poly': None, 'is_in_sand': self.is_point_in_sand(self.goal)}
         self.centroids.append(self.goal)
 
-        # Cached data
-        max_dist = 200 + self.skill
-        self.max_ddist = scipy_stats.norm(max_dist, max_dist / self.skill)
+        # Confidence level
+        self.confidence = HIGH_SKILL_CONFIDENCE
+        if self.skill <= SKILL_CONFIDENCE_THRESHHOLD:
+            self.confidence = LOW_SKILL_CONFIDENCE
 
-        max_dist_st = max_dist/2
-        self.max_ddist_st = scipy_stats.norm(max_dist_st, 2 * max_dist / self.skill)
-
-        # Conf level
-        self.conf = 0.95
-        if self.skill < 40:
-            self.conf = 0.75
-
-
+    # Taken directly from 2021_G2
     @functools.lru_cache()
     def _max_ddist_ppf(self, conf: float):
         return self.max_ddist.ppf(1.0 - conf)
 
+    # Based on _max_ddist_ppf from 2021_G2
     @functools.lru_cache()
     def _max_ddist_st_ppf(self, conf: float):
         return self.max_ddist_st.ppf(1.0 - conf)
     
+    # Based on function of same name from 2021_G2
     def splash_zone_within_polygon(self, current_point: Tuple[float, float], target_point: Tuple[float, float], conf: float) -> bool:
-        if type(current_point) == Point2D:
-            current_point = tuple(Point2D)
-
-        if type(target_point) == Point2D:
-            target_point = tuple(Point2D)
-
         distance = np.linalg.norm(np.array(current_point).astype(float) - np.array(target_point).astype(float))
         cx, cy = current_point
         tx, ty = target_point
@@ -216,12 +216,6 @@ class Player(object):
 
     # Find whether the splash zone is within the region we're aiming at (ONLY FOR POINTS IN REGION DICT!!!)
     def splash_zone_within_region(self, current_point: Tuple[float, float], target_point: Tuple[float, float], conf: float) -> float:
-        if type(current_point) == Point2D:
-            current_point = tuple(Point2D)
-
-        if type(target_point) == Point2D:
-            target_point = tuple(Point2D)
-
         distance = np.linalg.norm(np.array(current_point).astype(float) - np.array(target_point).astype(float))
         cx, cy = current_point
         tx, ty = target_point
@@ -305,13 +299,17 @@ class Player(object):
 
         return reachable_points, goal_distances, st_points
 
+    # Based on function of same name from 2021_G2, but heavily modified
     def next_target(self, currrent_point: Tuple[float, float], goal: Point2D, conf: float) -> Union[None, Tuple[float, float]]:
-        point_goal = float(goal.x), float(goal.y)
-        is_curr_sand = self.is_point_in_sand(currrent_point)
-        heap = [self.ScoredPoint(self, currrent_point, point_goal, actual_cost=0.0)]
-
+        goal_point = float(goal.x), float(goal.y)
+        heap = [self.ScoredPoint(self, currrent_point, goal_point, actual_cost=0.0)]
         start_point = heap[0].point
-        # Used to cache the best cost and avoid adding useless points to the heap
+
+        # Lower our confidence if we are putting so ensure we take more careful shots
+        if heap[0].goal_dist <= 20:
+            self.confidence = PUTTING_CONFIDENCE
+
+        # Cache best cost to avoid adding worse points to the heap
         best_cost = {tuple(currrent_point): 0.0}
         visited = set()
         points_checked = 0
@@ -330,9 +328,7 @@ class Player(object):
             visited.add(next_p)
 
             if np.linalg.norm(np.array(self.goal) - np.array(next_p)) <= 5.4 / 100.0:
-                # All we care about is the next point
-                # TODO: We need to check if the path length is <= 10, because if it isn't we probably need to
-                #  reduce the conf and try again for a shorter path.
+                # We can reach the hole, so all we care about is the next point
                 while next_sp.previous.point != start_point:
                     next_sp = next_sp.previous
                 return next_sp.point
@@ -343,15 +339,13 @@ class Player(object):
             for i in range(len(reachable_points)):
                 candidate_point = tuple(reachable_points[i])
                 goal_dist = goal_dists[i]
-                new_point = Player.ScoredPoint(self, candidate_point, point_goal, actual_cost=next_sp.actual_cost + 1, previous=next_sp, goal_dist=goal_dist, skill=self.skill)
+                new_point = Player.ScoredPoint(self, candidate_point, goal_point, actual_cost=next_sp.actual_cost + 1, previous=next_sp, goal_dist=goal_dist, skill=self.skill)
                 if candidate_point not in best_cost or best_cost[candidate_point] > new_point.actual_cost:
                     points_checked += 1
-                    # if not self.splash_zone_within_polygon(new_point.previous.point, new_point.point, conf):
-                    #     continue
                     best_cost[new_point.point] = new_point.actual_cost
                     heapq.heappush(heap, new_point)
 
-        # No path available
+        # No path found
         return None
 
     def _initialize_map_points(self, goal: Tuple[float, float], golf_map: Polygon, sand_traps):
@@ -378,6 +372,7 @@ class Player(object):
         elif point in self.point_in_sand_cache:
             return self.point_in_sand_cache[point]
 
+        # Cache each point we check to speed future checks
         is_in_sand = self.all_sandtraps.contains(shapely.geometry.Point(point))
         self.point_in_sand_cache[point] = is_in_sand
 
@@ -409,7 +404,7 @@ class Player(object):
             return self.prev_rv
 
         target_point = None
-        confidence = self.conf
+        confidence = self.confidence
         cl = float(curr_loc.x), float(curr_loc.y)
         
         while target_point is None:
@@ -422,7 +417,7 @@ class Player(object):
 
             confidence -= 0.05
 
-        # fixup target
+        # Adjust shot so we stop exactly on the target, if possible (accounting for roll)
         original_target = target_point
         current_point = np.array(tuple(curr_loc)).astype(float)
         original_dist = np.linalg.norm(np.array(target_point) - current_point)
@@ -462,19 +457,20 @@ class Player(object):
         return rv
 
 
+    # Based on function of same name from 2021_G2
     class ScoredPoint(object):
         """Scored point class for use in A* search algorithm"""
         def __init__(self, player, point: Tuple[float, float], goal: Tuple[float, float], actual_cost=float('inf'), previous=None, goal_dist=None, skill=50, conf=0.95):
             self.point = point
             self.goal = goal
-
+            self.goal_dist = goal_dist
             self.previous = previous
-
             self._actual_cost = actual_cost
-            if goal_dist is None:
+
+            if self.goal_dist is None:
                 a = np.array(self.point)
                 b = np.array(self.goal)
-                goal_dist = np.linalg.norm(a - b)
+                self.goal_dist = np.linalg.norm(a - b)
 
             sandtrap_cost = 0.5 if player.is_point_in_sand(point) else 0  # sandtrap adds an extra .5 shots
             max_dist = (200 + skill) * 1.1
@@ -487,7 +483,7 @@ class Player(object):
             reachable_points_cost = (reachable_grass_pts * 1 + reachable_st_pts_ct * 1.5) / reachable_pts_ct
 
             
-            self._h_cost = goal_dist / max_dist + sandtrap_cost + reachable_points_cost
+            self._h_cost = self.goal_dist / max_dist + sandtrap_cost + reachable_points_cost
 
             self._f_cost = self.actual_cost + self.h_cost
 
