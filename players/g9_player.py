@@ -477,6 +477,7 @@ def test_reachable():
     target_point = Point2D(0, 250, evaluate=False)
     player = Player(50, 0xdeadbeef, None)
     assert not player.reachable_point(current_point, target_point, 0.80)
+
 def test_splash_zone_within_polygon():
     poly = Polygon((0,0), (0, 300), (300, 300), (300, 0), evaluate=False)
     current_point = Point2D(0, 0, evaluate=False)
