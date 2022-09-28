@@ -437,6 +437,32 @@ class Player:
         self.logger.info(f"Distance adjusted by {distance - planned_distance}")
         self.logger.info(f"Angle adjusted by {angle - planned_angle}")
 
+        # Putting strategy
+        target_x = float(self.target[0])
+        target_y = float(self.target[1])
+        distance_to_target = np.linalg.norm(np.array([curr_x, curr_y]) - np.array([target_x, target_y]))
+        if not in_sand and distance_to_target < 20:
+            # The selection of putting distance is inspired by Fall 2022 Group 8's approach
+            angle = np.arctan2(target_y - curr_y, target_x - curr_x)
+            if self.skill >= 60:
+                overshoot_factor = 1.5
+            elif self.skill >= 40:
+                overshoot_factor = 1.2
+            elif self.skill >= 20:
+                overshoot_factor = 1.05
+            else:
+                if distance_to_target > 10:
+                    overshoot_factor = 0.9
+                elif distance_to_target > 1: 
+                    overshoot_factor = 0.95
+                else:
+                    overshoot_factor = 1.02
+            distance = distance_to_target * overshoot_factor
+            distance = min(20.0, distance)
+
+            return distance, angle
+        
+
         if distance > 200 + self.skill:
             self.logger.warning("Compensated shot is longer than max distance rating")
             return (planned_distance, planned_angle)
