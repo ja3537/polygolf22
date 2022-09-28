@@ -23,15 +23,23 @@ from polylabel import polylabel
 
 
 POINT_SPACING = 1
+
+""" Constants to adjust confidence based on skill level """
 HIGH_SKILL_CONFIDENCE = 0.95
 LOW_SKILL_CONFIDENCE = 0.75
 SKILL_CONFIDENCE_THRESHHOLD = 40
 PUTTING_CONFIDENCE = 0.1
 
+""" Constants to adjust heuristic cost for scored points in A* search """
+FIXED_SANDTRAP_COST = 0.5       # estimated additional shots required by entering sand trap
+REMAINING_SHOTS_WEIGHT = 1      # weight of estimated number of remaining shots from point (higher avoid points far from goal)
+SANDTRAP_WEIGHT = 1             # weight of point being in a sand trap (high avoids entering sand traps)
+REACHABLE_POINTS_WEIGHT = 1     # weight of nearby sand vs. grass (high avoids areas with lots of nearby grass)
+
 # Cached distribution
 DIST = scipy_stats.norm(0, 1)
 
-
+# Taken directly from 2021_G2
 @functools.lru_cache()
 def standard_ppf(conf: float) -> float:
     return DIST.ppf(conf)
@@ -80,42 +88,6 @@ def sympy_poly_to_shapely(sympy_poly: Polygon) -> ShapelyPolygon:
     v = sympy_poly.vertices
     v.append(v[0])
     return ShapelyPolygon(v)
-
-
-def create_vornoi_regions(map: sympy.Polygon, region_num: int, point_spacing: float) -> List[shapely.geometry.Polygon]:
-    points = []
-    min_x, min_y, max_x, max_y = map.bounds
-
-    # Generate a dense grid of points within the bounds of a given map to produce homogenous regions
-    # with centroids almost exactly in the middle when later clustering with kmeans
-    for x in np.arange(min_x, max_x, point_spacing):
-        for y in np.arange(min_y, max_y, point_spacing):
-            pt = shapely.geometry.Point(x, y)
-            if map.contains(pt):
-                points.append([x, y])
-
-
-    # Cluster the random points into groups using kmeans
-    np_points = np.array(points)
-    kmeans = Kmeans(np_points.shape[1], region_num)
-    kmeans.train(np_points.astype(np.float32))
-
-    # Generate a voronoi diagram from the centers of the generated regions
-    center_points = shapely.geometry.MultiPoint(kmeans.centroids)
-    regions = shapely.ops.voronoi_diagram(center_points, edges=False)
-
-    # Intersect the generated regions with the given map
-    regions = [region.intersection(map) for region in regions.geoms]
-
-    # Break possibly split regions into separate polygons
-    flattened_regions = []
-    for region in regions:
-        if region.geom_type == 'MultiPolygon':
-            flattened_regions.extend(region.geoms)
-        elif region.geom_type == 'Polygon':
-            flattened_regions.append(region)
-
-    return flattened_regions
       
 
 class Player(object):
@@ -230,6 +202,41 @@ class Player(object):
 
         return ratio_of_overlapping_area
 
+    def create_vornoi_regions(self, poly: sympy.Polygon, region_num: int, point_spacing: float) -> List[shapely.geometry.Polygon]:
+        points = []
+        min_x, min_y, max_x, max_y = poly.bounds
+
+        # Generate a dense grid of points within the bounds of a given map to produce homogenous regions
+        # with centroids almost exactly in the middle when later clustering with kmeans
+        for x in np.arange(min_x, max_x, point_spacing):
+            for y in np.arange(min_y, max_y, point_spacing):
+                pt = shapely.geometry.Point(x, y)
+                if poly.contains(pt):
+                    points.append([x, y])
+
+
+        # Cluster the random points into groups using kmeans
+        np_points = np.array(points)
+        kmeans = Kmeans(np_points.shape[1], region_num)
+        kmeans.train(np_points.astype(np.float32))
+
+        # Generate a voronoi diagram from the centers of the generated regions
+        center_points = shapely.geometry.MultiPoint(kmeans.centroids)
+        regions = shapely.ops.voronoi_diagram(center_points, edges=False)
+
+        # Intersect the generated regions with the given map
+        regions = [region.intersection(poly) for region in regions.geoms]
+
+        # Break possibly split regions into separate polygons
+        flattened_regions = []
+        for region in regions:
+            if region.geom_type == 'MultiPolygon':
+                flattened_regions.extend(region.geoms)
+            elif region.geom_type == 'Polygon':
+                flattened_regions.append(region)
+
+        return flattened_regions
+
 
     def split_polygon(self, region_num: int) -> Dict[Tuple[float, float], Dict[str, any]]:
         """ Split a given Golf Map into regions of roughly equal size.
@@ -246,7 +253,7 @@ class Player(object):
 
         golf_map_with_holes = shapely.geometry.Polygon(self.shapely_map.exterior.coords, [list(st.exterior.coords) for st in self.shapely_sand_traps])
 
-        regions = create_vornoi_regions(golf_map_with_holes, region_num, POINT_SPACING)
+        regions = self.create_vornoi_regions(golf_map_with_holes, region_num, POINT_SPACING)
 
         # Find total and avg area
         avg_area_centroid = golf_map_with_holes.area/len(regions)
@@ -256,7 +263,7 @@ class Player(object):
             num_points = max(floor(st.area/avg_area_centroid), 1)
             # If there are 1 more or points run k means else use already exsisting geometry
             if num_points > 1:
-                st_regions.extend(create_vornoi_regions(st, num_points, POINT_SPACING))
+                st_regions.extend(self.create_vornoi_regions(st, num_points, POINT_SPACING))
             else:
                 st_regions.append(st)
 
@@ -472,7 +479,7 @@ class Player(object):
                 b = np.array(self.goal)
                 self.goal_dist = np.linalg.norm(a - b)
 
-            sandtrap_cost = 0.5 if player.is_point_in_sand(point) else 0  # sandtrap adds an extra .5 shots
+            sandtrap_cost = FIXED_SANDTRAP_COST if player.is_point_in_sand(point) else 0  # sandtrap adds an extra .5 shots
             max_dist = (200 + skill) * 1.1
             
             reachable_points, _, st_points = player.numpy_adjacent_and_dist(point, conf)
@@ -480,10 +487,12 @@ class Player(object):
             reachable_pts_ct = len(reachable_points)
             reachable_st_pts_ct = len(st_points)
             reachable_grass_pts = reachable_pts_ct - reachable_st_pts_ct
-            reachable_points_cost = (reachable_grass_pts * 1 + reachable_st_pts_ct * 1.5) / reachable_pts_ct
+            reachable_points_cost = (reachable_grass_pts * 1 + reachable_st_pts_ct * (1 + FIXED_SANDTRAP_COST)) / reachable_pts_ct
 
-            
-            self._h_cost = self.goal_dist / max_dist + sandtrap_cost + reachable_points_cost
+            self._h_cost = \
+                (self.goal_dist / max_dist) * REMAINING_SHOTS_WEIGHT  \
+                + sandtrap_cost * SANDTRAP_WEIGHT \
+                + reachable_points_cost * REACHABLE_POINTS_WEIGHT
 
             self._f_cost = self.actual_cost + self.h_cost
 
