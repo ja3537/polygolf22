@@ -43,7 +43,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--result_dir", default="results", help="Directory path to dump results")
     parser.add_argument("--seed_entropy", "-s", type=int, help="Seed used to generate seed for each game")
-    parser.add_argument("--trials", "-t", default=5, type=int, help="Number of trials for each config")
+    parser.add_argument("--trials", "-t", default=1, type=int, help="Number of trials for each config")
     parser.add_argument("--maps", "-m", default="tournament_maps_test.json", help="Json for tournament maps")
     parser.add_argument("--verbose", "-v", action="store_true", help="Verbose")
     args = parser.parse_args()
