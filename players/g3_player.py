@@ -25,16 +25,24 @@ from polylabel import polylabel
 POINT_SPACING = 1
 
 """ Constants to adjust confidence based on skill level """
-HIGH_SKILL_CONFIDENCE = 0.95
-LOW_SKILL_CONFIDENCE = 0.75
+HIGH_SKILL_CONFIDENCE = 0.90
+LOW_SKILL_CONFIDENCE = 0.85
 SKILL_CONFIDENCE_THRESHHOLD = 40
 PUTTING_CONFIDENCE = 0.1
 
 """ Constants to adjust heuristic cost for scored points in A* search """
-FIXED_SANDTRAP_COST = 0.5       # estimated additional shots required by entering sand trap
-REMAINING_SHOTS_WEIGHT = 1      # weight of estimated number of remaining shots from point (higher avoid points far from goal)
-SANDTRAP_WEIGHT = 1             # weight of point being in a sand trap (high avoids entering sand traps)
-REACHABLE_POINTS_WEIGHT = 1     # weight of nearby sand vs. grass (high avoids areas with lots of nearby grass)
+FIXED_SANDTRAP_COST = 0.5                   # estimated additional shots required by entering sand trap
+REMAINING_SHOTS_WEIGHT = 2                  # weight of estimated number of remaining shots from point (higher avoid points far from goal)
+SAND_TRAP_WEIGHT = 1                        # weight of point being in a sand trap (high avoids entering sand traps)
+REACHABLE_POINTS_WEIGHT = 1                 # weight of nearby sand vs. grass (high avoids areas with lots of nearby grass)
+SAND_TRAP_IN_SPLASH_ZONE_WEIGHT = 3         # weight of target splash zone containing sand traps (high avoids splash zones containing sand traps)
+
+""" Constants to adjust backup logic that handles rolling """
+BACKUP_INCREMENT = 0.1
+UNDO_BACKUP_INCREMENTS = 50                 # if we backup into a sand trap, how much backing up should we undo to avoid the sand
+EXTRA_BACKUP_PCT_TO_AVOID_SAND_TRAPS = 0.1  # how much further back should we go to avoid a sand trap (going further back means not reaching our target)
+METERS_TO_OVERSHOOT_HOLE = 1                # when aiiming for the hole, how many meters past should we try to overshoot so that we roll in
+PCT_SPLASH_ZONE_IN_MAP_TO_BACK_UP = 0.96    # how much of the target splash zone needs to be in the map for us to try backing up
 
 # Cached distribution
 DIST = scipy_stats.norm(0, 1)
@@ -74,20 +82,6 @@ def splash_zone(distance: float, angle: float, conf: float, skill: int, current_
 
     current_point = np.array([current_point])
     return np.concatenate((current_point, top_arc, current_point))
-
-# Taken directly from 2021_G2
-def sympy_poly_to_mpl(sympy_poly: Polygon) -> Path:
-    """Helper function to convert sympy Polygon to matplotlib Path object"""
-    v = sympy_poly.vertices
-    v.append(v[0])
-    return Path(v, closed=True)
-
-# Taken directly from 2021_G2
-def sympy_poly_to_shapely(sympy_poly: Polygon) -> ShapelyPolygon:
-    """Helper function to convert sympy Polygon to shapely Polygon object"""
-    v = sympy_poly.vertices
-    v.append(v[0])
-    return ShapelyPolygon(v)
       
 
 class Player(object):
@@ -143,8 +137,6 @@ class Player(object):
         self.goal = float(target.x), float(target.y)
 
         self.np_map_points = None
-        self.mpl_poly = None
-        self.shapely_poly = None
         self.prev_rv = None
 
         # Record maxmimum distances and their potential distributions
@@ -176,7 +168,7 @@ class Player(object):
         return self.max_ddist_st.ppf(1.0 - conf)
     
     # Based on function of same name from 2021_G2
-    def splash_zone_within_polygon(self, current_point: Tuple[float, float], target_point: Tuple[float, float], conf: float) -> bool:
+    def splash_zone_within_map(self, current_point: Tuple[float, float], target_point: Tuple[float, float], conf: float) -> bool:
         distance = np.linalg.norm(np.array(current_point).astype(float) - np.array(target_point).astype(float))
         cx, cy = current_point
         tx, ty = target_point
@@ -184,10 +176,21 @@ class Player(object):
         splash_zone_poly_points = splash_zone(float(distance), float(angle), float(conf), self.skill, current_point,
                                               self.is_point_in_sand(current_point),
                                               self.is_point_in_sand(target_point))
-        return self.shapely_poly.contains(ShapelyPolygon(splash_zone_poly_points))
+        return self.shapely_map.contains(ShapelyPolygon(splash_zone_poly_points))
+
+    def pct_splash_zone_within_map(self, current_point: Tuple[float, float], target_point: Tuple[float, float], conf: float) -> float:
+        distance = np.linalg.norm(np.array(current_point).astype(float) - np.array(target_point).astype(float))
+        cx, cy = current_point
+        tx, ty = target_point
+        angle = np.arctan2(float(ty) - float(cy), float(tx) - float(cx))
+        splash_zone_poly_points = splash_zone(float(distance), float(angle), float(conf), self.skill, current_point,
+                                                self.is_point_in_sand(current_point),
+                                                self.is_point_in_sand(target_point))
+        splash_zone_shapely = ShapelyPolygon(splash_zone_poly_points)
+        return splash_zone_shapely.intersection(self.shapely_map).area / splash_zone_shapely.area
 
     # Find whether the splash zone is within the region we're aiming at (ONLY FOR POINTS IN REGION DICT!!!)
-    def splash_zone_within_region(self, current_point: Tuple[float, float], target_point: Tuple[float, float], conf: float) -> float:
+    def pct_splash_zone_within_region(self, current_point: Tuple[float, float], target_point: Tuple[float, float], conf: float) -> float:
         distance = np.linalg.norm(np.array(current_point).astype(float) - np.array(target_point).astype(float))
         cx, cy = current_point
         tx, ty = target_point
@@ -198,9 +201,11 @@ class Player(object):
 
         corresp_region = self.centroids_dict[target_point]['poly']
         splash_zone_shapely = ShapelyPolygon(splash_zone_poly_points)
-        ratio_of_overlapping_area = corresp_region.intersection(splash_zone_shapely).area / corresp_region.area
 
-        return ratio_of_overlapping_area
+        if not corresp_region or not splash_zone_shapely.area: 
+            return 0
+
+        return splash_zone_shapely.intersection(corresp_region).area / splash_zone_shapely.area
 
     def create_vornoi_regions(self, poly: shapely.geometry.Polygon, region_num: int, point_spacing: float) -> List[shapely.geometry.Polygon]:
         points = []
@@ -328,7 +333,7 @@ class Player(object):
                 continue
             if next_sp.actual_cost > 10:
                 continue
-            if next_sp.actual_cost > 0 and not self.splash_zone_within_polygon(next_sp.previous.point, next_p, conf):
+            if next_sp.actual_cost > 0 and not self.splash_zone_within_map(next_sp.previous.point, next_p, conf):
                 if next_p in best_cost:
                     del best_cost[next_p]
                 continue
@@ -347,9 +352,15 @@ class Player(object):
                 candidate_point = tuple(reachable_points[i])
                 goal_dist = goal_dists[i]
                 new_point = Player.ScoredPoint(self, candidate_point, goal_point, actual_cost=next_sp.actual_cost + 1, previous=next_sp, goal_dist=goal_dist, skill=self.skill)
-                if candidate_point not in best_cost or best_cost[candidate_point] > new_point.actual_cost:
+                
+                # Check to see how much of the splash zone is in sand traps and adjust point weight accordingly
+                pct_splash_zone_not_in_target_region = 1 - self.pct_splash_zone_within_region(next_sp.point, new_point.point, conf) 
+                if pct_splash_zone_not_in_target_region > 0.1 and pct_splash_zone_not_in_target_region < 1:
+                    new_point.f_cost = new_point.f_cost + (pct_splash_zone_not_in_target_region * SAND_TRAP_IN_SPLASH_ZONE_WEIGHT)
+                
+                if candidate_point not in best_cost or best_cost[candidate_point] > new_point.f_cost:
                     points_checked += 1
-                    best_cost[new_point.point] = new_point.actual_cost
+                    best_cost[new_point.point] = new_point.f_cost
                     heapq.heappush(heap, new_point)
 
         # No path found
@@ -358,8 +369,6 @@ class Player(object):
     def _initialize_map_points(self, goal: Tuple[float, float], golf_map: Polygon, sand_traps):
         # Storing the points as numpy array
         np_map_points = []
-        self.mpl_poly = sympy_poly_to_mpl(golf_map)
-        self.shapely_poly = sympy_poly_to_shapely(golf_map)
         pp = self.centroids
 
         for point in pp:
@@ -413,6 +422,9 @@ class Player(object):
         target_point = None
         confidence = self.confidence
         cl = float(curr_loc.x), float(curr_loc.y)
+
+        print('\n')
+        print(f"===== SHOT NUMBER {score} =====")
         
         while target_point is None:
             if confidence <= 0.0:
@@ -431,7 +443,6 @@ class Player(object):
         v = np.array(target_point) - current_point # Vector from current to target
         u = v / original_dist # Unit vector pointing from current to target
 
-        print('\n')
         print(f"Current location: {round(cl[0], 2)}, {round(cl[1], 2)}")
         print(F"Target point: {round(original_target[0], 2)}, {round(original_target[1], 2)}")
 
@@ -439,23 +450,43 @@ class Player(object):
         if original_dist >= 20.0:
             max_roll = (original_dist / 1.1) * 0.1
             # If target is goal, try to overshoot by 1 meter to roll into the hole
-            max_offset = max_roll if tuple(target_point) != self.goal else max_roll - 1
+            max_offset = max_roll if tuple(target_point) != self.goal else (max_roll - METERS_TO_OVERSHOOT_HOLE)
             offset = 0
+            dist = original_dist
             
-            # If target point is in a sand trap, try backing up, up to 10% more, to avoid
-            if self.is_point_in_sand(target_point):
-                max_offset = max_offset * 1.1
+            # If target point is in a sand trap, try backing up, up to X% more, to avoid
+            original_target_in_st = self.is_point_in_sand(target_point)
+            if original_target_in_st:
+                print('Target point is in a sand trap')
+                max_offset = max_offset * (1 + EXTRA_BACKUP_PCT_TO_AVOID_SAND_TRAPS)
+            
+            # Keep track of if we have backed into or started in grass so we don't go too far and hit sand
+            hit_grass = not original_target_in_st
 
-            while offset <= max_offset and self.splash_zone_within_polygon(tuple(current_point), tuple(target_point), confidence) and not self.is_point_in_sand(target):
-                offset += 0.1
+            while offset <= max_offset and self.pct_splash_zone_within_map(tuple(current_point), tuple(target_point), confidence) > PCT_SPLASH_ZONE_IN_MAP_TO_BACK_UP:
+                offset += BACKUP_INCREMENT
                 dist = original_dist - min(offset, max_offset)
-                target_point = current_point + u * dist
+                new_target_point = current_point + u * dist
+                                
+                new_target_in_st = self.is_point_in_sand(tuple(target_point))
+                if not hit_grass and not new_target_in_st:
+                    hit_grass = True
+                backed_into_sand = hit_grass and new_target_in_st
+
+                if backed_into_sand:
+                    print("Backed up into sand...undoing the backup")
+                    offset -= BACKUP_INCREMENT * UNDO_BACKUP_INCREMENTS
+                    dist = original_dist - max(offset, 0)
+                    target_point = current_point + u * dist
+                    break
+
+                target_point = new_target_point
 
             print(f"Offset: {round(original_dist - dist, 2)} (max allowed offset: {round(max_offset, 2)})")
 
         # If target is goal and we are putting, overshoot by 10% so we roll into the hole
         elif tuple(target_point) == self.goal:
-            dist = original_dist * 1.1
+            dist = original_dist + METERS_TO_OVERSHOOT_HOLE
             target_point = current_point + u * dist
 
         if tuple(target_point) != original_target:    
@@ -482,7 +513,7 @@ class Player(object):
             self.goal = goal
             self.goal_dist = goal_dist
             self.previous = previous
-            self._actual_cost = actual_cost
+            self.actual_cost = actual_cost
 
             if self.goal_dist is None:
                 a = np.array(self.point)
@@ -499,24 +530,12 @@ class Player(object):
             reachable_grass_pts = reachable_pts_ct - reachable_st_pts_ct
             reachable_points_cost = (reachable_grass_pts * 1 + reachable_st_pts_ct * (1 + FIXED_SANDTRAP_COST)) / reachable_pts_ct
 
-            self._h_cost = \
+            self.h_cost = \
                 (self.goal_dist / max_dist) * REMAINING_SHOTS_WEIGHT  \
-                + sandtrap_cost * SANDTRAP_WEIGHT \
+                + sandtrap_cost * SAND_TRAP_WEIGHT \
                 + reachable_points_cost * REACHABLE_POINTS_WEIGHT
 
-            self._f_cost = self.actual_cost + self.h_cost
-
-        @property
-        def f_cost(self):
-            return self._f_cost
-
-        @property
-        def h_cost(self):
-            return self._h_cost
-
-        @property
-        def actual_cost(self):
-            return self._actual_cost
+            self.f_cost = self.actual_cost + self.h_cost
         
         def __lt__(self, other):
             return self.f_cost < other.f_cost
