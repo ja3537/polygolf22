@@ -17,8 +17,10 @@ from scipy.spatial.distance import cdist
 
 # Cached distribution
 DIST = scipy_stats.norm(0, 1)
-X_STEP = 3.0
-Y_STEP = 3.0
+X_STEP = 5.0
+STEP_DIFF = 0.5  # For adaptive sampling. Reduces step size by this amt each iter.
+ADAPT_MAX_PTS = 20000  # Adaptive sampling. Max total num of points
+
 NEARBY_DIST = 100
 
 
@@ -60,7 +62,7 @@ def splash_zone(distance: float, angle: float, conf: float, skill: int, current_
     current_point = np.array([current_point])
     return np.concatenate((current_point, top_arc, current_point))
 
-def poly_to_points(poly: Polygon) -> Iterator[Tuple[float, float]]:
+def poly_to_points(poly: Polygon, step_size: float) -> Iterator[Tuple[float, float]]:
     x_min, y_min = float('inf'), float('inf')
     x_max, y_max = float('-inf'), float('-inf')
     for point in poly.vertices:
@@ -70,8 +72,9 @@ def poly_to_points(poly: Polygon) -> Iterator[Tuple[float, float]]:
         x_max = max(x, x_max)
         y_min = min(y, y_min)
         y_max = max(y, y_max)
-    x_step = X_STEP
-    y_step = Y_STEP
+
+    x_step = step_size
+    y_step = step_size
 
     x_current = x_min
     y_current = y_min
@@ -187,6 +190,11 @@ class Player:
         self.num_trials = 1000
         self.prev_loc = None
 
+        if self.np_map_points is None:
+            gx, gy = float(target.x), float(target.y)
+            self.goal = float(target.x), float(target.y)
+            self._initialize_map_points((gx, gy), golf_map, sand_traps)
+
         end = time.time()
         print("Execution time - Player Init:", (end - start) * 10 ** 3, "ms")
 
@@ -194,15 +202,45 @@ class Player:
         start = time.time()
 
         # Storing the points as numpy array
-        np_map_points = [goal]
-        map_points = [goal]
         self.mpl_poly = sympy_poly_to_mpl(golf_map)
         self.mpl_sand_polys = [sympy_poly_to_mpl(trap) for trap in sand_traps]
         self.shapely_sand_polys = [sympy_poly_to_shapely(trap) for trap in sand_traps]
         self.shapely_poly = sympy_poly_to_shapely(golf_map)
-        pp = list(poly_to_points(golf_map))
+        init_step_size = X_STEP  # So that first line of while loop can increment this
+
+        # Select step size based on total num of points
+        total_pts = 0
+        while total_pts < ADAPT_MAX_PTS:
+            pp = list(poly_to_points(golf_map, init_step_size))
+            np_map_points = [goal]
+
+            sand_penalty = [0]
+            for point in pp:
+                # Use matplotlib here because it's faster than shapely for this calculation...
+                if self.mpl_poly.contains_point(point):
+                    x, y = point
+                    np_map_points.append(np.array([x, y]))
+                    trapped = False
+                    for trap_i, trap in enumerate(self.mpl_sand_polys):
+                        if trap.contains_point(point):
+                            penalty = self.shapely_sand_polys[trap_i].exterior.distance(ShapelyPoint(point))
+                            sand_penalty.append(penalty)
+                            trapped = True
+                            break
+                    if not trapped:
+                        sand_penalty.append(0)
+
+            total_pts = len(np_map_points)
+            print(f"Step size: {init_step_size}, Total number of points: {total_pts}")
+            init_step_size = round(init_step_size - STEP_DIFF, 1)
+
+        init_step_size = round(init_step_size + 2 * STEP_DIFF, 1)  # Select step size from before while loop broke
+        print(f"Selecting step size: {init_step_size}")
+
+        pp = list(poly_to_points(golf_map, init_step_size))
+        np_map_points = [goal]
+
         sand_penalty = [0]
-        #point_trapped = [False]
         for point in pp:
             # Use matplotlib here because it's faster than shapely for this calculation...
             if self.mpl_poly.contains_point(point):
@@ -215,16 +253,13 @@ class Player:
                         sand_penalty.append(penalty)
                         trapped = True
                         break
-                if not trapped: sand_penalty.append(0)
-                #point_trapped.append(trapped)
-        
-        #self.point_trapped = np.array(point_trapped, dtype=bool)
+                if not trapped:
+                    sand_penalty.append(0)
+
         self.np_sand_penalty = np.array(sand_penalty)
         self.np_map_points = np.array(np_map_points)
         self.np_goal_dist = cdist(self.np_map_points, np.array([np.array(self.goal)]), 'euclidean')
         self.np_goal_dist = self.np_goal_dist.flatten()
-
-        #print(self.np_map_points.shape, self.np_sand_penalty.shape, self.np_goal_dist.shape)
 
         end = time.time()
         print("Execution time - _initialize_map_points():", (end - start) * 10 ** 3, "ms")
@@ -417,11 +452,6 @@ class Player:
             Tuple[float, float]: Return a tuple of distance and angle in radians to play the shot
         """
         start = time.time()
-
-        if self.np_map_points is None:
-            gx, gy = float(target.x), float(target.y)
-            self.goal = float(target.x), float(target.y)
-            self._initialize_map_points((gx, gy), golf_map, sand_traps)
 
         # Optimization to retry missed shots
         if self.prev_rv is not None and curr_loc == prev_loc:
