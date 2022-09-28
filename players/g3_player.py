@@ -170,6 +170,8 @@ class Player(object):
         
         self.centroids = list(self.centroids_dict.keys())
 
+        self.point_in_sand_cache = {}
+
         # Add start and end points to centroids and centroids_dict
         self.centroids_dict[self.start] = {'poly': None, 'is_in_sand': self.is_point_in_sand(self.start)}
         self.centroids_dict[self.goal] = {'poly': None, 'is_in_sand': self.is_point_in_sand(self.goal)}
@@ -353,7 +355,6 @@ class Player(object):
         return None
 
     def _initialize_map_points(self, goal: Tuple[float, float], golf_map: Polygon, sand_traps):
-        print('initializing map points')
         # Storing the points as numpy array
         np_map_points = []
         self.mpl_poly = sympy_poly_to_mpl(golf_map)
@@ -367,7 +368,6 @@ class Player(object):
         self.np_map_points = np.array(np_map_points)
         self.np_goal_dist = cdist(self.np_map_points, np.array([np.array(self.goal)]), 'euclidean')
         self.np_goal_dist = self.np_goal_dist.flatten()
-        print('done initializing map points')
 
 
     def is_point_in_sand(self, point: Tuple[float, float])-> bool:
@@ -375,9 +375,13 @@ class Player(object):
 
         if point in self.centroids_dict:
             return self.centroids_dict[point]['is_in_sand']
+        elif point in self.point_in_sand_cache:
+            return self.point_in_sand_cache[point]
 
-        return self.all_sandtraps.contains(shapely.geometry.Point(point))
+        is_in_sand = self.all_sandtraps.contains(shapely.geometry.Point(point))
+        self.point_in_sand_cache[point] = is_in_sand
 
+        return is_in_sand
 
 
     def play(self, score: int, golf_map: sympy.Polygon, target: sympy.geometry.Point2D, sand_traps, curr_loc: sympy.geometry.Point2D, prev_loc: sympy.geometry.Point2D, prev_landing_point: sympy.geometry.Point2D, prev_admissible: bool) -> Tuple[float, float]:
