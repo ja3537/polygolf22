@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 import os
 import pickle
+from tracemalloc import start
 import numpy as np
 import functools
 import sympy
@@ -8,20 +9,21 @@ import logging
 import heapq
 from time import perf_counter
 from scipy import stats as scipy_stats
-import random
 import matplotlib.pyplot as plt
 from typing import Tuple, Iterator, List, Union
 from sympy.geometry import Polygon, Point2D
 from matplotlib.path import Path
 from shapely.geometry import Polygon as ShapelyPolygon, Point as ShapelyPoint, shape as ShapelyShape, LineString as ShapelyLineString
 from scipy.spatial.distance import cdist
+import random 
+
 
 # Cached distribution
 DIST = scipy_stats.norm(0, 1)
 SAND_DIST = scipy_stats.norm(0, 2)
-X_STEP = 10
-Y_STEP = 10
-
+X_STEP = 6
+Y_STEP = 6
+np.random.seed(0)
 
 @functools.lru_cache()
 def standard_ppf(conf: float) -> float:
@@ -175,23 +177,25 @@ class Player:
             map_path (str): File path to map
             precomp_dir (str): Directory path to store/load precomputation
         """
-        # # if depends on skill
-        # precomp_path = os.path.join(precomp_dir, "{}_skill-{}.pkl".format(map_path, skill))
-        # # if doesn't depend on skill
-        # precomp_path = os.path.join(precomp_dir, "{}.pkl".format(map_path))
-        
-        # # precompute check
-        # if os.path.isfile(precomp_path):
-        #     # Getting back the objects:
-        #     with open(precomp_path, "rb") as f:
-        #         self.obj0, self.obj1, self.obj2 = pickle.load(f)
-        # else:
-        #     # Compute objects to store
-        #     self.obj0, self.obj1, self.obj2 = _
 
-        #     # Dump the objects
-        #     with open(precomp_path, 'wb') as f:
-        #         pickle.dump([self.obj0, self.obj1, self.obj2], f)
+
+        # # if depends on skill
+        self.precomp_path = os.path.join(precomp_dir, "{}_skill-{}.pkl".format(map_path, skill))
+        # if doesn't depend on skill
+        self.precomp_path = os.path.join(precomp_dir, "{}.pkl".format(map_path))
+        
+        # precompute check
+        if os.path.isfile(self.precomp_path):
+            # Getting back the objects:
+            with open(self.precomp_path, "rb") as f:
+                self.cached_paths = pickle.load(f)[0]
+        else:
+            # Compute objects to store
+            cis = [.95, .99, .75, .6, .85]
+            self.cached_paths = {}
+            for ci in cis:
+                self.cached_paths[str(ci)] = {}
+
         self.skill = skill
         self.rng = rng
         self.logger = logger
@@ -205,6 +209,7 @@ class Player:
         max_dist = 200 + self.skill
         self.max_ddist = scipy_stats.norm(max_dist, max_dist / self.skill)
         self.max_sand_ddist = scipy_stats.norm(max_dist/2, 2 * max_dist / self.skill)
+
 
         self.map_points_is_sand = {}
         self.sand_traps = [sympy_poly_to_shapely(sympy_poly) for sympy_poly in sand_traps]
@@ -288,11 +293,14 @@ class Player:
             next_sp = heapq.heappop(heap)
             next_p = next_sp.point
 
+            # print(f"checking {next_p} with cost {next_sp.actual_cost}")
+
             if next_p in visited:
                 continue
             if next_sp.actual_cost > 10:
                 continue
             if next_sp.actual_cost > 0 and not self.splash_zone_within_polygon(next_sp.previous.point, next_p, conf): #check if shooting from prev to here will land in bounds
+                # print(next_sp.previous.point)
                 if next_p in best_cost:
                     del best_cost[next_p]
                 continue
@@ -302,13 +310,41 @@ class Player:
                 # All we care about is the next point
                 # TODO: We need to check if the path length is <= 10, because if it isn't we probably need to
                 #  reduce the conf and try again for a shorter path.
-
+                
                 path_length = 0
+                save_path = []
                 while next_sp.previous.point != start_point:
+                    save_path.append(next_sp.point)
+
                     next_sp = next_sp.previous
                     path_length += 1
+                save_path.append(next_sp.point)
+                save_path.append(next_sp.previous.point)
+                save_path.reverse()
+
+                for i in range(path_length):
+                    start_of_path = save_path[i]
+                    self.cached_paths[str(conf)][start_of_path] = {
+                        'path': save_path[i+1:]
+                    }
 
                 return next_sp.point, path_length
+            
+            if next_p in self.cached_paths[str(conf)]:
+                # add all the points of this path
+                prevPoint = next_sp
+                for additional_cost, node in enumerate(self.cached_paths[str(conf)][next_p]['path']):
+                    if node not in visited:
+                        newPoint = ScoredPoint(node, point_goal, next_sp.actual_cost + 1 + additional_cost, previous=prevPoint, goal_dist=None, skill=self.skill, in_sand=self.is_in_sand(node))
+                        # heapq.heappush(heap, newPoint)
+                        prevPoint = newPoint
+                        if node not in best_cost or best_cost[node] > newPoint.actual_cost:
+                            # points_checked += 1
+                            # if not self.splash_zone_within_polygon(new_point.previous.point, new_point.point, conf):
+                            #     continue
+                            best_cost[newPoint.point] = newPoint.actual_cost
+                            heapq.heappush(heap, newPoint)
+                continue
             
             # Add adjacent points to heap
             reachable_points, goal_dists = self.numpy_adjacent_and_dist(next_p, conf)
@@ -406,7 +442,7 @@ class Player:
                 "target_path_length": target_path_length,
                 "confidence": confidence
             }
-
+            # print(self.cached_paths)
             if (tuple(target_point) == self.goal):
                 break
             if ((perf_counter() - self.turn_start)*(target_path_length + score)) > 540:
@@ -422,7 +458,13 @@ class Player:
         # fixup target
         current_point = np.array(tuple(curr_loc)).astype(float)
 
-        print(target_points)
+        if tuple(target_point) == self.goal:
+            # Dump the objects
+            with open(self.precomp_path, 'wb') as f:
+                pickle.dump([self.cached_paths], f)
+
+
+        # print(target_points)
         if tuple(target_point) == self.goal or np.linalg.norm(np.array(target_point) - current_point) < 20:
             original_dist = np.linalg.norm(np.array(target_point) - current_point)
             v = np.array(target_point) - current_point
