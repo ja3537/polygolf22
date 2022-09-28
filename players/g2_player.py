@@ -131,11 +131,6 @@ class ScoredPoint:
             else:
                 self._h_cost = max_sand/max_sand + (goal_dist-max_sand)/max_dist
 
-        # given a point 21 and 20 away, we want to do the one with putter
-        if goal_dist > 20:
-            self._h_cost += 1
-
-    
         self._f_cost = self.actual_cost + self.h_cost
 
     @property
@@ -304,7 +299,7 @@ class Player:
                 continue
             if next_sp.actual_cost > 10:
                 continue
-            if next_sp.actual_cost > 0 and not self.splash_zone_within_polygon(next_sp.previous.point, next_p, conf): #check if shooting from prev to here will land in bounds
+            if tuple(next_p) != self.goal and next_sp.actual_cost > 0 and not self.splash_zone_within_polygon(next_sp.previous.point, next_p, conf): #check if shooting from prev to here will land in bounds
                 # print(next_sp.previous.point)
                 if next_p in best_cost:
                     del best_cost[next_p]
@@ -315,7 +310,7 @@ class Player:
                 # All we care about is the next point
                 # TODO: We need to check if the path length is <= 10, because if it isn't we probably need to
                 #  reduce the conf and try again for a shorter path.
-                
+
                 path_length = 0
                 save_path = []
                 while next_sp.previous.point != start_point:
@@ -353,6 +348,7 @@ class Player:
             
             # Add adjacent points to heap
             reachable_points, goal_dists = self.numpy_adjacent_and_dist(next_p, conf)
+            
             for i in range(len(reachable_points)):
                 candidate_point = tuple(reachable_points[i])
                 goal_dist = goal_dists[i]
@@ -380,8 +376,7 @@ class Player:
         np_map_points = [np.array([x, y]) for x, y in pp if self.mpl_poly.contains_point((x, y))]
 
         xmin, ymin, xmax, ymax = golf_map.bounds
-        add_start = perf_counter()
-        while (len(np_map_points) < 4000) and perf_counter() - add_start < 30:
+        while (len(np_map_points) < 4000):
             x, y = np.random.uniform(xmin, xmax, 5000), np.random.uniform(ymin, ymax, 5000)
             np_map_points += [np.array(point) for point in np.array([x, y], dtype=int).T if self.mpl_poly.contains_point(point)]
         
@@ -546,10 +541,6 @@ class Player:
                     # print(f"new point {current_point + u * distance}")
                     # print(f"old point {self.goal + u * 0.54}")
                 target_point = current_point + u * distance
-
-
-
-
 
         cx, cy = current_point
         tx, ty = target_point
