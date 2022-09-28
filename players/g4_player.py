@@ -5,6 +5,7 @@ import functools
 import sympy
 import logging
 import heapq
+import time
 from scipy import stats as scipy_stats
 
 
@@ -16,8 +17,8 @@ from scipy.spatial.distance import cdist
 
 # Cached distribution
 DIST = scipy_stats.norm(0, 1)
-X_STEP = 5.0
-Y_STEP = 5.0
+X_STEP = 3.0
+Y_STEP = 3.0
 NEARBY_DIST = 100
 
 
@@ -110,6 +111,7 @@ class ScoredPoint:
 
         max_target_dist = 200 + skill
         max_dist = standard_ppf(0.99) * (max_target_dist / skill) + max_target_dist
+        # TODO: max_dist = (max_target_dist / skill) + max_target_dist
         max_dist *= 1.10
 
         self.trapped = (sand_penalty != 0) if trapped is None else trapped
@@ -163,10 +165,11 @@ class Player:
         self.goal = None
         self.visited = set()
         self.new_visited = set()
-        self.mode = 'a_star'
+        self.mode = 'a_star'  # 'greedy'
         self.prev_rv = None
 
         self.roll_into_sand = set()
+        start = time.time()
 
         # Cached data
         max_dist = 200 + self.skill
@@ -184,7 +187,12 @@ class Player:
         self.num_trials = 1000
         self.prev_loc = None
 
+        end = time.time()
+        print("Execution time - Player Init:", (end - start) * 10 ** 3, "ms")
+
     def _initialize_map_points(self, goal: Tuple[float, float], golf_map: Polygon, sand_traps):
+        start = time.time()
+
         # Storing the points as numpy array
         np_map_points = [goal]
         map_points = [goal]
@@ -217,6 +225,9 @@ class Player:
         self.np_goal_dist = self.np_goal_dist.flatten()
 
         #print(self.np_map_points.shape, self.np_sand_penalty.shape, self.np_goal_dist.shape)
+
+        end = time.time()
+        print("Execution time - _initialize_map_points():", (end - start) * 10 ** 3, "ms")
 
     @functools.lru_cache()
     def _max_ddist_ppf(self, conf: float):
@@ -316,6 +327,9 @@ class Player:
 
 
     def next_target(self, curr_loc: Tuple[float, float], goal: Point2D, conf: float, score=0) -> Union[None, Tuple[float, float]]:
+        # print("Starting next_target")
+        start1 = time.time()
+        
         trapped = any([trap.contains_point(curr_loc) for trap in self.mpl_sand_polys])
         point_goal = float(goal.x), float(goal.y)
         heap = [ScoredPoint(curr_loc, point_goal, score, trapped=trapped)]
@@ -326,8 +340,13 @@ class Player:
         points_checked = 0
 
         self.roll_into_sand = set()
+        
+        count = []
+        count2 = 0
 
         while len(heap) > 0:
+            count2 += 1
+            start2 = time.time()
             next_sp = heapq.heappop(heap)
             next_p = next_sp.point
 
@@ -349,6 +368,11 @@ class Player:
                 #  reduce the conf and try again for a shorter path.
                 while next_sp.previous.point != start_point:
                     next_sp = next_sp.previous
+
+                print(f"Iters of the while loop in next_target: {len(count)}, {count2}. Avg time: {sum(count) / len(count) * 10 ** 3} ms")
+                end1 = time.time()
+                print(f"Exec Time - next_target(): {(end1 - start1) * 10 ** 3} ms")
+
                 return next_sp.point
             
             # Add adjacent points to heap
@@ -367,6 +391,9 @@ class Player:
                         self.fix_up_rolling_in_sand(next_sp.point, new_point.point, conf)
 
                     heapq.heappush(heap, new_point) 
+
+            end2 = time.time()
+            count.append((end2 - start2))
 
         # No path available
         return None
@@ -389,6 +416,8 @@ class Player:
         Returns:
             Tuple[float, float]: Return a tuple of distance and angle in radians to play the shot
         """
+        start = time.time()
+
         if self.np_map_points is None:
             gx, gy = float(target.x), float(target.y)
             self.goal = float(target.x), float(target.y)
@@ -437,6 +466,10 @@ class Player:
 
         rv = curr_loc.distance(Point2D(target_point, evaluate=False)), angle
         self.prev_rv = rv
+
+        end = time.time()
+        print("Execution time - play():", (end - start) * 10 ** 3, "ms")
+
         return rv
 
 
