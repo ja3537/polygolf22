@@ -19,12 +19,12 @@ from shapely.geometry import Polygon as ShapelyPolygon
 # Problem Configuration
 # =====================
 #
-DEBUG = True
+DEBUG = False
 samples = 20
-x_quant = 25
-y_quant = 25
+x_quant = 20
+y_quant = 20
 dist_quant = 20
-angle_quant = 36
+angle_quant = 24
 
 # =================
 # Utility functions
@@ -191,9 +191,16 @@ class Player:
     def gen_T_parallel(self):
         debug("Generating T...")
         t_start = perf_counter()
+
+        # In parallel
+        # If this code is causing problems in the tournament, comment out the
+        # two lines below and uncomment the line below "Serially"
         pool = multiprocessing.Pool(multiprocessing.cpu_count())
         T = np.array(pool.map(self.gen_action_transitions, self.A))
+
+        # Serially (performance testing)
         # T = np.array([self.gen_action_transitions(action) for action in self.A])
+
         t_end = perf_counter()
         debug("T generated in", t_end - t_start, "seconds")
         return T
@@ -397,7 +404,8 @@ class Player:
         #
         debug("Training model...")
         self.mdp = mdptoolbox.mdp.PolicyIteration(self.T, self.R, 0.89, max_iter=20)
-        self.mdp.setVerbose()
+        if DEBUG:
+            self.mdp.setVerbose()
         self.mdp.run()
         debug("Converged in", self.mdp.time)
 
@@ -434,13 +442,16 @@ class Player:
         end_y = cy + planned_dy
 
         distance, angle = to_polar(end_x - curr_x, end_y - curr_y)
-        self.logger.info(f"Distance adjusted by {distance - planned_distance}")
-        self.logger.info(f"Angle adjusted by {angle - planned_angle}")
+        if DEBUG:
+            self.logger.info(f"Distance adjusted by {distance - planned_distance}")
+            self.logger.info(f"Angle adjusted by {angle - planned_angle}")
 
         # Putting strategy
         target_x = float(self.target[0])
         target_y = float(self.target[1])
-        distance_to_target = np.linalg.norm(np.array([curr_x, curr_y]) - np.array([target_x, target_y]))
+        distance_to_target = np.linalg.norm(
+            np.array([curr_x, curr_y]) - np.array([target_x, target_y])
+        )
         if not in_sand and distance_to_target < 20:
             # The selection of putting distance is inspired by Fall 2022 Group 8's approach
             angle = np.arctan2(target_y - curr_y, target_x - curr_x)
@@ -453,7 +464,7 @@ class Player:
             else:
                 if distance_to_target > 10:
                     overshoot_factor = 0.9
-                elif distance_to_target > 1: 
+                elif distance_to_target > 1:
                     overshoot_factor = 0.95
                 else:
                     overshoot_factor = 1.02
@@ -461,10 +472,12 @@ class Player:
             distance = min(20.0, distance)
 
             return distance, angle
-        
 
         if distance > 200 + self.skill:
-            self.logger.warning("Compensated shot is longer than max distance rating")
+            if DEBUG:
+                self.logger.warning(
+                    "Compensated shot is longer than max distance rating"
+                )
             return (planned_distance, planned_angle)
 
         return (distance, angle)
