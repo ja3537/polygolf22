@@ -19,7 +19,7 @@ from scipy.spatial.distance import cdist
 DIST = scipy_stats.norm(0, 1)
 X_STEP = 5.0
 STEP_DIFF = 0.5  # For adaptive sampling. Reduces step size by this amt each iter.
-ADAPT_MAX_PTS = 18000  # Adaptive sampling. Max total num of points
+ADAPT_MAX_PTS = 17000  # Adaptive sampling. Max total num of points
 
 NEARBY_DIST = 100
 
