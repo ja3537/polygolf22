@@ -3,6 +3,7 @@ import multiprocessing
 import os.path
 import pickle
 from itertools import product
+from os import makedirs
 from time import perf_counter
 from typing import List, Tuple
 
@@ -19,7 +20,7 @@ from shapely.geometry import Polygon as ShapelyPolygon
 # =====================
 #
 DEBUG = True
-samples = 100
+samples = 20
 x_quant = 25
 y_quant = 25
 dist_quant = 20
@@ -55,11 +56,12 @@ def debug(*args):
 #
 class Player:
     def to_bin_index(self, x, y):
-        # xi = int((x - min_x) / (x_tick))
-        # yi = int((y - min_y) / (y_tick))
         xi = next(xi for xi, x_bin in enumerate(self.x_bins) if x_bin > x) - 1
         yi = next(yi for yi, y_bin in enumerate(self.y_bins) if y_bin > y) - 1
         return xi, yi
+
+    def in_sand(self, x, y):
+        return any(trap.contains(ShapelyPoint(x, y)) for trap in self.sand_polys)
 
     # ===========================
     # Shot transition calculation
@@ -86,8 +88,24 @@ class Player:
         angle_rv = norm(loc=angle, scale=angle_dev)
         ds = dist_rv.rvs(size=num_samples)
         # Naive rolling distance
-        ds *= 1.1
+        # ds *= 1.1
+
         angles = angle_rv.rvs(size=num_samples)
+        xs, ys = to_cartesian(ds, angles)
+        xs += start_x
+        ys += start_y
+
+        # Expensive, better rolling calculation
+        roll_mask = np.array(
+            [
+                0
+                if self.in_sand(x, y)
+                or not self.green_poly.contains(ShapelyPoint(x, y))
+                else 1
+                for x, y in zip(xs, ys)
+            ]
+        )
+        ds *= roll_mask * 1.1
         xs, ys = to_cartesian(ds, angles)
         xs += start_x
         ys += start_y
@@ -215,7 +233,10 @@ class Player:
             # Getting back the objects:
             debug("Found cached policy", precomp_path)
             with open(precomp_path, "rb") as f:
-                self.policy = pickle.load(f)
+                if DEBUG:
+                    self.T, self.policy = pickle.load(f)
+                else:
+                    self.policy = pickle.load(f)
         else:
             self.solve_mdp()
             if DEBUG:
@@ -224,7 +245,13 @@ class Player:
 
             # Dump the objects
             with open(precomp_path, "wb") as f:
-                pickle.dump(self.policy, f)
+                if DEBUG:
+                    pickle.dump([self.T, self.policy], f)
+                else:
+                    pickle.dump(self.policy, f)
+
+        # if DEBUG:
+        #     self.visualize_all_shots(*self.start)
 
     def init_geometry(self):
         # =============================
@@ -506,3 +533,76 @@ class Player:
             )
         plt.title(f"Policy: {self.map_file}, skill {self.skill}")
         plt.savefig("policy.png", dpi=400)
+
+    # ===================
+    # Visualize all shots
+    # ===================
+    #
+    # Convert into an animation with
+    # `convert -delay 0 -loop 0 shots/*.png -quality 95 shots.mp4`
+    #
+    def visualize_all_shots(self, x, y):
+        makedirs("shots", exist_ok=True)
+        test_xi, test_yi = self.to_bin_index(x, y)
+        test_terrain = "green"
+
+        map_min_x, map_min_y, map_max_x, map_max_y = self.green_poly.bounds
+
+        for ai, action in enumerate(self.A):
+            print("Rendering", ai + 1, "out of", len(self.A))
+
+            self.reset_figure()
+            plt.gca().set_xlim([map_min_x, map_max_x])
+            plt.gca().set_ylim([map_min_y, map_max_y])
+            plt.gca().invert_yaxis()
+
+            self.draw_map()
+            self.draw_bins()
+
+            state_bin = self.S_index[(test_xi, test_yi, test_terrain)]
+            transitions = self.T[ai][state_bin][:-1]
+            transition_probs = np.zeros((self.total_y_bins, self.total_x_bins))
+            for si, prob in enumerate(transitions):
+                yi, xi, _ = self.S[si]
+                transition_probs[yi][xi] = prob
+            self.overlay_tiles(transition_probs, vmin=0, vmax=1)
+
+            start_x = self.x_bins[test_xi] + 0.5 * self.x_tick
+            start_y = self.y_bins[test_yi] + 0.5 * self.y_tick
+
+            # Plot policy vector
+            policy = self.policy[state_bin]
+            distance, angle = self.A[policy]
+            dx, dy = to_cartesian(distance, angle)
+            plt.arrow(
+                start_x,
+                start_y,
+                dx,
+                dy,
+                color="green",
+                alpha=0.5,
+                linewidth=1,
+                head_width=8,
+                head_length=8,
+                length_includes_head=True,
+            )
+
+            # Plot this action
+            distance, angle = action
+            dx, dy = to_cartesian(distance, angle)
+            plt.arrow(
+                start_x,
+                start_y,
+                dx,
+                dy,
+                color="black",
+                alpha=0.5,
+                linewidth=1,
+                head_width=8,
+                head_length=8,
+                length_includes_head=True,
+            )
+
+            plt.title(f"Distance: {distance}, Angle: {angle}")
+
+            plt.savefig(f"shots/{ai}.png")
