@@ -21,8 +21,8 @@ import random
 # Cached distribution
 DIST = scipy_stats.norm(0, 1)
 SAND_DIST = scipy_stats.norm(0, 2)
-X_STEP = 6
-Y_STEP = 6
+X_STEP = 3
+Y_STEP = 3
 np.random.seed(0)
 
 @functools.lru_cache()
