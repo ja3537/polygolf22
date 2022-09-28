@@ -129,6 +129,9 @@ class Player(object):
             precomp_dir (str): Directory path to store/load precomputation
         """
 
+        self.centroids_dict = {}
+        self.point_in_sand_cache = {}
+
         # Check if the map has been precomputed
         precomp_path = os.path.join(precomp_dir, "{}.pkl".format(map_path))
         if os.path.isfile(precomp_path):
@@ -139,7 +142,6 @@ class Player(object):
             self.shapely_map = shapely.geometry.Polygon(golf_map.vertices)
             self.shapely_sand_traps = [shapely.geometry.Polygon(st.vertices) for st in sand_traps]
             self.all_sandtraps = shapely.ops.unary_union(self.shapely_sand_traps)
-            self.centroids_dict = {}
             self.centroids_dict = self.split_polygon(50)
             
             # Then dump the precomputation for the next run
@@ -169,8 +171,6 @@ class Player(object):
         self.prev_rv = None
         
         self.centroids = list(self.centroids_dict.keys())
-
-        self.point_in_sand_cache = {}
 
         # Add start and end points to centroids and centroids_dict
         self.centroids_dict[self.start] = {'poly': None, 'is_in_sand': self.is_point_in_sand(self.start)}
