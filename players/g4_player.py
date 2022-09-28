@@ -387,7 +387,7 @@ class Player:
 
             if next_p in visited:
                 continue
-            if next_sp.actual_cost > 10:
+            if next_sp.actual_cost > 12:
                 continue
             if next_sp.actual_cost > score:
                 #trapped = any([trap.contains_point(next_p) for trap in self.mpl_sand_polys])
@@ -477,16 +477,18 @@ class Player:
             # Unit vector pointing from current to target
             u = v / original_dist
             if original_dist >= 20.0:
-                max_offset = original_dist / 20
+                additional_dist = self.skill / 50
+                max_offset = original_dist / 20 + additional_dist
                 offset = 0
                 prev_target = target_point
-                while offset < max_offset and self.splash_zone_within_polygon(tuple(current_point), target_point, confidence):
+                while offset < max_offset and self.splash_zone_within_polygon(tuple(current_point), target_point,
+                                                                              confidence):
                     offset += 1
-                    dist = original_dist - offset
+                    dist = original_dist + additional_dist - offset
                     prev_target = target_point
                     target_point = current_point + u * dist
-                target_point = prev_target + u * self.skill/50 # shoot further in hope that the ball would roll into the goal
-            elif (not trapped) and self.skill >= 70:
+                target_point = prev_target
+            elif original_dist <= 10.0 and (not trapped) and self.skill >= 50:
                 target_point += u
 
 
