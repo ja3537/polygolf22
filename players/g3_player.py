@@ -219,11 +219,11 @@ class Player(object):
                     points.append([x, y])
 
         # Add random points to distribution to help clustering accuracy
-        # while len(points) < 100 * region_num:
-        #     x, y = (random.uniform(min_x, max_x), random.uniform(min_y, max_y))
-        #     pt = shapely.geometry.Point(x, y)
-        #     if poly.contains(pt):
-        #         points.append([x, y])
+        while len(points) < 100 * region_num:
+            x, y = (random.uniform(min_x, max_x), random.uniform(min_y, max_y))
+            pt = shapely.geometry.Point(x, y)
+            if poly.contains(pt):
+                points.append([x, y])
 
         # Cluster the random points into groups using kmeans
         np_points = np.array(points)
@@ -237,7 +237,7 @@ class Player(object):
         # Intersect the generated regions with the given map
         regions = [r for r in [poly.intersection(region) for region in regions.geoms] if not r.is_empty]
 
-        # Break possibly split regions into separate polygons
+        # Break possibly split regions into separate polygons (avoids tiny regions)
         flattened_regions = []
         for region in regions:
             if region.geom_type == 'MultiPolygon':
@@ -245,6 +245,7 @@ class Player(object):
             elif region.geom_type == 'Polygon':
                 flattened_regions.append(region)
 
+        # Remove regions with small perimiters with respect to their area
         flattened_regions = [r for r in flattened_regions if r.length/(r.area**(1/2)) < 15]
 
         return flattened_regions
