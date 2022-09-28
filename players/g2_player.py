@@ -182,7 +182,7 @@ class Player:
         # # if depends on skill
         self.precomp_path = os.path.join(precomp_dir, "{}_skill-{}.pkl".format(map_path, skill))
         # if doesn't depend on skill
-        self.precomp_path = os.path.join(precomp_dir, "{}.pkl".format(map_path))
+        # self.precomp_path = os.path.join(precomp_dir, "{}.pkl".format(map_path))
         
         # precompute check
         if os.path.isfile(self.precomp_path):
@@ -209,7 +209,8 @@ class Player:
         max_dist = 200 + self.skill
         self.max_ddist = scipy_stats.norm(max_dist, max_dist / self.skill)
         self.max_sand_ddist = scipy_stats.norm(max_dist/2, 2 * max_dist / self.skill)
-
+        self.max_distance = max_dist
+        self.max_sand_distance = max_dist/2
 
         self.map_points_is_sand = {}
         self.sand_traps = [sympy_poly_to_shapely(sympy_poly) for sympy_poly in sand_traps]
@@ -244,7 +245,8 @@ class Player:
         current_point = np.array(current_point).astype(float)
         target_point = np.array(target_point).astype(float)
 
-        return np.linalg.norm(current_point - target_point) <= self._max_ddist_ppf(conf) if not self.is_in_sand(current_point) else self._max__sand_ddist_ppf(conf)
+        # return np.linalg.norm(current_point - target_point) <= self._max_ddist_ppf(conf) if not self.is_in_sand(current_point) else self._max__sand_ddist_ppf(conf)
+        return np.linalg.norm(current_point - target_point) <= self.max_distance if not self.is_in_sand(current_point) else self.max_sand_distance
     
     def splash_zone_within_polygon(self, current_point: Tuple[float, float], target_point: Tuple[float, float], conf: float) -> bool:
         if type(current_point) == Point2D:
@@ -261,18 +263,21 @@ class Player:
         angle = np.arctan2(float(ty) - float(cy), float(tx) - float(cx))
         splash_zone_poly_points = splash_zone(float(distance), float(angle), float(conf), self.skill, current_point, this_in_sand)
         shapely_splash_zone_poly_points = ShapelyPolygon(splash_zone_poly_points)
-
-        if self.shapely_poly.contains(shapely_splash_zone_poly_points):
-            if not self.is_in_sand(target_point) and not shapely_splash_zone_poly_points.contains(self.shapely_goal):
-                total_overlap = sum([shapely_splash_zone_poly_points.intersection(sand_trap).area for sand_trap in self.sand_traps if shapely_splash_zone_poly_points.intersects(self.shapely_poly)])
-                return total_overlap/shapely_splash_zone_poly_points.area <= 1 - conf
-            return True
-        return False
+        try:
+            if self.shapely_poly.contains(shapely_splash_zone_poly_points):
+                if not self.is_in_sand(target_point) and not shapely_splash_zone_poly_points.contains(self.shapely_goal):
+                    total_overlap = sum([shapely_splash_zone_poly_points.intersection(sand_trap).area for sand_trap in self.sand_traps if shapely_splash_zone_poly_points.intersects(self.shapely_poly)])
+                    return total_overlap/shapely_splash_zone_poly_points.area <= 1 - conf
+                return True
+            return False
+        except:
+            return False
 
     def numpy_adjacent_and_dist(self, point: Tuple[float, float], conf: float):
         cloc_distances = cdist(self.np_map_points, np.array([np.array(point)]), 'euclidean')
         cloc_distances = cloc_distances.flatten()
-        distance_mask = cloc_distances <= (self._max_ddist_ppf(conf) if not self.is_in_sand(point) else self._max__sand_ddist_ppf(conf))
+        # distance_mask = cloc_distances <= (self._max_ddist_ppf(conf) if not self.is_in_sand(point) else self._max__sand_ddist_ppf(conf))
+        distance_mask = cloc_distances <= (self.max_distance if not self.is_in_sand(point) else self.max_sand_distance)
 
         reachable_points = self.np_map_points[distance_mask]
         goal_distances = self.np_goal_dist[distance_mask]
@@ -442,7 +447,7 @@ class Player:
                 "target_path_length": target_path_length,
                 "confidence": confidence
             }
-            # print(self.cached_paths)
+
             if (tuple(target_point) == self.goal):
                 break
             if ((perf_counter() - self.turn_start)*(target_path_length + score)) > 540:
@@ -450,10 +455,11 @@ class Player:
         
         if len(target_points) == 0:
             return None
-        if (tuple(target_point) != self.goal):
+        if target_point is None or (tuple(target_point) != self.goal):
             smallest_path = min([target["target_path_length"] for target in target_points.values()])
             max_confidence_of_smallest_path = max([target["confidence"] for target in target_points.values() if target["target_path_length"] == smallest_path])
             target_point = target_points[max_confidence_of_smallest_path]["target_point"]
+            # print(max_confidence_of_smallest_path)
 
         # fixup target
         current_point = np.array(tuple(curr_loc)).astype(float)
@@ -466,6 +472,7 @@ class Player:
 
         # print(target_points)
         if tuple(target_point) == self.goal or np.linalg.norm(np.array(target_point) - current_point) < 20:
+            
             original_dist = np.linalg.norm(np.array(target_point) - current_point)
             v = np.array(target_point) - current_point
             # Unit vector pointing from current to target
@@ -490,7 +497,8 @@ class Player:
                 # does this mean just the half way point??
                 # current_point + somedistance* 1.1 * u == self.goal
                 point_to_aim = self.goal - current_point
-                perfect_distance_for_rolling = np.array([point_to_aim[0]/(1.1*u[0]), point_to_aim[1]/(1.1*u[1])])
+
+                perfect_distance_for_rolling = np.array([point_to_aim[0]/(1.1*u[0]) if point_to_aim[0] != 0 else 0, point_to_aim[1]/(1.1*u[1]) if point_to_aim[1] != 0 else 0])
                 # print(f"perfect distance for rolling {perfect_distance_for_rolling}")
                 # find the distance between the current point and the perfect point
                 # print(f"1.1 of perfect dist landing spot {current_point + perfect_distance_for_rolling*(1.1*u)}")
