@@ -426,7 +426,7 @@ class Player:
                     dist = original_dist - offset
                     prev_target = target_point
                     target_point = current_point + u * dist
-                target_point = prev_target + u * 2 # shoot further in hope that the ball would roll into the goal
+                target_point = prev_target + u * self.skill/50 # shoot further in hope that the ball would roll into the goal
             elif (not trapped) and self.skill >= 70:
                 target_point += u
 
