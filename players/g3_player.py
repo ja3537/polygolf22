@@ -19,6 +19,7 @@ from sympy.geometry import Polygon, Point2D
 from matplotlib.path import Path
 from shapely.geometry import Polygon as ShapelyPolygon, Point as ShapelyPoint
 from scipy.spatial.distance import cdist
+import sklearn
 
 
 # Cached distribution
