@@ -1,0 +1,9 @@
+{
+    "default": [
+        "maps/g1/tournament.json",
+        "maps/g3/g3_tournament.json",
+        "maps/g5/tourney.json",
+        "maps/g7/g7_final.json",
+        "maps/default/checkers2.json"
+    ]
+}
