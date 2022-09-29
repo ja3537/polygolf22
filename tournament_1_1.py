@@ -50,7 +50,7 @@ if __name__ == "__main__":
     RESULT_DIR = args.result_dir
     os.makedirs(RESULT_DIR, exist_ok=True)
 
-    PLAYERS_LIST = list('d')
+    PLAYERS_LIST = list('1')
     SKILLS = [10, 25, 50, 100]
     TRIALS = args.trials
     with open(args.maps, "r") as f:
