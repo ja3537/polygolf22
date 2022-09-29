@@ -17,8 +17,8 @@ from scipy.spatial.distance import cdist
 # Cached distribution
 DIST = scipy_stats.norm(0, 1)
 SAND_DIST = scipy_stats.norm(0, 2)
-X_STEP = 10
-Y_STEP = 10
+X_STEP = 5
+Y_STEP = 5
 
 
 @functools.lru_cache()
@@ -215,6 +215,8 @@ class Player:
         self.shapely_poly = None
         self.goal = None
         self.prev_rv = None
+        self.num_step = 0
+        self.num_miss = 0
 
         # Cached data
         max_dist = 200 + self.skill
@@ -222,11 +224,12 @@ class Player:
         self.max_sand_ddist = scipy_stats.norm(max_dist/2, 2 * max_dist / self.skill)
 
         # Conf level
-        self.conf = 0.6
+        self.conf = 0.60
         step=(0.8-0.6)/6
         if self.skill >= 40:
              self.conf = 0.6+ (100 - self.skill)//6 *step
         print("skill: ", self.skill, self.conf)
+
 
         self.map_points_is_sand = {}
         self.sand_traps = [sympy_poly_to_shapely(sympy_poly) for sympy_poly in sand_traps]
@@ -237,6 +240,15 @@ class Player:
                 gx, gy = float(target.x), float(target.y)
                 self.goal = float(target.x), float(target.y)
                 self._initialize_map_points((gx, gy), golf_map)
+                if self.np_map_points is not None and len(self.np_map_points) > 5000:
+                    global X_STEP
+                    X_STEP = 10
+                    global Y_STEP
+                    Y_STEP = 10
+                    self.np_map_points = None
+                    self._initialize_map_points((gx, gy), golf_map)
+                    print("change grid size to 10x10")
+
                 # print(f"done init map with {len(self.np_map_points)} points")
 
 
@@ -325,6 +337,7 @@ class Player:
             
             # Add adjacent points to heap
             reachable_points, goal_dists = self.numpy_adjacent_and_dist(next_p, conf)
+
             for i in range(len(reachable_points)):
                 candidate_point = tuple(reachable_points[i])
                 goal_dist = goal_dists[i]
@@ -356,6 +369,8 @@ class Player:
         self.np_goal_dist = cdist(self.np_map_points, np.array([np.array(self.goal)]), 'euclidean')
         self.np_goal_dist = self.np_goal_dist.flatten()
 
+        print("Length of map pts:", len(self.np_map_points))
+
     def is_in_sand(self, point: sympy.geometry.Point2D):
         if (type(point) == np.ndarray):
             point = Point2D(point[0], point[1])
@@ -382,13 +397,28 @@ class Player:
             gx, gy = float(target.x), float(target.y)
             self.goal = float(target.x), float(target.y)
             self._initialize_map_points((gx, gy), golf_map) ## initrialize at runtime? multi thread it?
+            if self.np_map_points is not None and len(self.np_map_points) > 5000:
+                global X_STEP
+                X_STEP = 10
+                global Y_STEP
+                Y_STEP = 10
+                self.np_map_points = None
+                self._initialize_map_points((gx, gy), golf_map)
+                print("change grid size to 10x10")
+
 
         # Optimization to retry missed shots
         if not prev_admissible and self.prev_rv is not None:
+            self.num_step += 1
+            self.num_miss += 1
+            if self.num_miss >= 3 and self.conf <= 0.9:
+                self.conf += 0.05
+
             return self.prev_rv
 
         self.current_shot_in_sand = self.is_in_sand(curr_loc)
         # print(f"Current shot in sand: {self.current_shot_in_sand}")
+
 
         target_point = None
         confidence = self.conf
@@ -400,6 +430,18 @@ class Player:
             # print(f"turn # {score} searching with {confidence} confidence")
             target_point = self.next_target(cl, target, confidence)
             confidence -= 0.05
+
+
+        if self.num_step >= 8:
+            confidence = 0.9
+
+        if self.prev_rv:
+            a = np.array( (float(curr_loc.x), float(curr_loc.y)) )
+            b = np.array( (float(target.x), float(target.y)) )
+            goal_dist = np.linalg.norm(a - b)
+            if goal_dist < (200 + self.skill) / 2 and confidence < 0.8:
+                confidence = 0.80
+
 
         # fixup target
         current_point = np.array(tuple(curr_loc)).astype(float)
@@ -426,33 +468,25 @@ class Player:
 
         rv = curr_loc.distance(Point2D(target_point, evaluate=False)), angle
         self.prev_rv = rv
+        self.num_step += 1
+        self.num_miss = 0
         return rv
-
-
-# === Unit Tests ===
 
 def test_reachable():
     current_point = Point2D(0, 0, evaluate=False)
     target_point = Point2D(0, 250, evaluate=False)
     player = Player(50, 0xdeadbeef, None)
-    
     assert not player.reachable_point(current_point, target_point, 0.80)
-
 
 def test_splash_zone_within_polygon():
     poly = Polygon((0,0), (0, 300), (300, 300), (300, 0), evaluate=False)
-
     current_point = Point2D(0, 0, evaluate=False)
-
     # Just checking polygons inside and outside
     inside_target_point = Point2D(150, 150, evaluate=False)
     outside_target_point = Point2D(299, 100, evaluate=False)
-
     player = Player(50, 0xdeadbeef, None)
     assert player.splash_zone_within_polygon(current_point, inside_target_point, poly, 0.8)
     assert not player.splash_zone_within_polygon(current_point, outside_target_point, poly, 0.8)
-
-
 def test_poly_to_points():
     poly = Polygon((0,0), (0, 10), (10, 10), (10, 0))
     points = set(poly_to_points(poly))
