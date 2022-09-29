@@ -195,11 +195,11 @@ class Player:
         # In parallel
         # If this code is causing problems in the tournament, comment out the
         # two lines below and uncomment the line below "Serially"
-        pool = multiprocessing.Pool(multiprocessing.cpu_count())
-        T = np.array(pool.map(self.gen_action_transitions, self.A))
+        #pool = multiprocessing.Pool(multiprocessing.cpu_count())
+        #T = np.array(pool.map(self.gen_action_transitions, self.A))
 
         # Serially (performance testing)
-        # T = np.array([self.gen_action_transitions(action) for action in self.A])
+        T = np.array([self.gen_action_transitions(action) for action in self.A])
 
         t_end = perf_counter()
         debug("T generated in", t_end - t_start, "seconds")
