@@ -379,7 +379,9 @@ class Player:
         is_in_sandtrap = any([sandtrap.contains_point(target_point) for sandtrap in self.mpl_poly_trap])
         if is_in_sandtrap:
             distance = np.linalg.norm(np.array(current_point).astype(float) - np.array(target_point).astype(float))
-        else: 
+        if self.skill < 50:
+            distance = (np.linalg.norm(np.array(current_point).astype(float) - np.array(target_point).astype(float)) * 1.05)
+        elif self.skill >= 50:
             distance = (np.linalg.norm(np.array(current_point).astype(float) - np.array(target_point).astype(float)) * 1.08)
         cx, cy = float(current_point[0]), float(current_point[1])
         tx, ty = float(target_point[0]), float(target_point[1])
@@ -438,31 +440,23 @@ class Player:
             v = np.array(target_point) - current_point
             # Unit vector pointing from current to target
             u = v / original_dist
-            if original_dist >= 20.0:
-                roll_distance = original_dist / 20
-                max_offset = roll_distance
-                offset = 0
-                prev_target = target_point
-                while offset < max_offset and self.is_splash_zone_within_polygon(tuple(current_point), target_point, confidence):
-                    offset += 1
-                    dist = original_dist - offset
-                    prev_target = target_point
-                    target_point = current_point + u * dist
-                target_point = prev_target
-            elif original_dist < 20.0:
-                # Within goal -> Taken from G9_2021
-                # s = Point(curr_loc.x, curr_loc.y)
-                # t = Point(target.x, target.y)
-                # if s.distance(t) < 20:
-                #     angle = atan2(target.y - curr_loc.y,target.x- curr_loc.x)
-                #     distance = s.distance(t)
-                #     return (distance, angle)
+            if np.linalg.norm(current_point - self.goal) <= 20:
                 cx, cy = current_point
                 tx, ty = target_point
                 angle = np.arctan2(ty - cy, tx - cx)
-                rv = min(dist1(target_point, current_point) / (1 - (1 / self.skill * 3)), constants.min_putter_dist)+1, angle
+                rv = min(((dist1(target_point, current_point) / (1 - (1 / self.skill * 3)))+3), constants.min_putter_dist), angle
                 self.prev_rv = rv
                 return rv
+            roll_distance = original_dist / 20
+            max_offset = roll_distance
+            offset = 0
+            prev_target = target_point
+            while offset < max_offset and self.is_splash_zone_within_polygon(tuple(current_point), target_point, confidence):
+                offset += 1
+                dist = original_dist - offset
+                prev_target = target_point
+                target_point = current_point + u * dist
+            target_point = prev_target
             
         cx, cy = current_point
         tx, ty = target_point
