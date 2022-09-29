@@ -48,7 +48,7 @@ def splash_zone(distance: float, angle: float, conf: float, skill: int, current_
     if in_sandtrap:
         # the distance rating is halved, and the standard deviations for the angle and distance distributions are doubled
         distances = np.vectorize(standard_ppf)(
-            conf_points) * (distance / skill) * 2 + distance / 2
+            conf_points) * (distance / skill) * 2 + distance
         angles = np.vectorize(standard_ppf)(
             conf_points) * (1/(2*skill)) * 2 + angle
     else:
@@ -245,16 +245,13 @@ class Player:
         #     # Dump the objects
         #     with open(precomp_path, 'wb') as f:
         #         pickle.dump([self.obj0, self.obj1, self.obj2], f)
-        self.skill = skill
-        self.rng = rng
+
+        # miscellaneous
         self.logger = logger
-        self.np_map_points = None
-        self.map_points_in_sand_trap = None  # :: Set[Tuple[float, float]]
-        self.sand_trap_matlab_polys = None   # :: List[Path]
-        self.sand_trap_shapely_polys = None
-        self.mpl_paly = None
-        self.shapely_poly = None
-        self.goal = None
+        self.rng = rng
+
+        self.skill = skill
+        self.goal = (float(target.x), float(target.y))
         self.prev_rv = None
 
         # Cached data
@@ -264,14 +261,38 @@ class Player:
         max_sandtrap_dist = max_dist/2
         self.max_sandtrap_ddist = scipy_stats.norm(max_sandtrap_dist, max_dist / self.skill)
 
+        self.mpl_poly = sympy_poly_to_mpl(golf_map)
+        self.shapely_poly = sympy_poly_to_shapely(golf_map)
+        self.sand_trap_matlab_polys = [sympy_poly_to_mpl( sand_trap) for sand_trap in sand_traps]
+        self.sand_trap_shapely_polys = [sympy_poly_to_shapely( sand_trap) for sand_trap in sand_traps]
+
         # Conf level
         self.conf = 0.95
         if self.skill < 40:
             self.conf = 0.75
 
-        # initialize logger
-        self.logger = logging.getLogger(__name__)
-        self.logger.setLevel(logging.DEBUG)
+        # precomputation
+        precomp_path = os.path.join(precomp_dir, f"{map_path}.pkl")
+        if os.path.isfile(precomp_path):
+            with open(precomp_path, "rb") as f:
+                self.map_points_in_sand_trap, self.np_map_points, self.np_goal_dist = pickle.load(f)
+        else:
+            np_map_points = [self.goal]  # storing the points as numpy array
+            pp = list(poly_to_points(golf_map))
+
+            for point in pp:
+                # use matplotlib here because it's faster than shapely for this calculation...
+                if self.mpl_poly.contains_point(point):
+                    x, y = point
+                    np_map_points.append(np.array([x, y]))
+
+            # save state
+            self.map_points_in_sand_trap = find_map_points_in_sand_trap(pp, self.sand_trap_matlab_polys)
+            self.np_map_points = np.array(np_map_points)
+            self.np_goal_dist = cdist(self.np_map_points, np.array([np.array(self.goal)]), 'euclidean').flatten()
+
+            with open(precomp_path, 'wb') as f:
+                pickle.dump([self.map_points_in_sand_trap, self.np_map_points, self.np_goal_dist], f)
 
     @functools.lru_cache()
     def _max_ddist_ppf(self, conf: float):
@@ -409,29 +430,6 @@ class Player:
         # No path available
         return None
 
-    def _initialize_map_points(self, goal: Tuple[float, float], golf_map: Polygon, sand_traps: List[sympy.Polygon]):
-        np_map_points = [goal]  # storing the points as numpy array
-        self.mpl_poly = sympy_poly_to_mpl(golf_map)
-        self.shapely_poly = sympy_poly_to_shapely(golf_map)
-        self.sand_trap_matlab_polys = [sympy_poly_to_mpl(
-            sand_trap) for sand_trap in sand_traps]
-        self.sand_trap_shapely_polys = [sympy_poly_to_shapely(
-            sand_trap) for sand_trap in sand_traps]
-
-        pp = list(poly_to_points(golf_map))
-        for point in pp:
-            # Use matplotlib here because it's faster than shapely for this calculation...
-            if self.mpl_poly.contains_point(point):
-                x, y = point
-                np_map_points.append(np.array([x, y]))
-
-        self.map_points_in_sand_trap = find_map_points_in_sand_trap(
-            pp, self.sand_trap_matlab_polys)
-        self.np_map_points = np.array(np_map_points)
-        self.np_goal_dist = cdist(self.np_map_points, np.array(
-            [np.array(self.goal)]), 'euclidean')
-        self.np_goal_dist = self.np_goal_dist.flatten()
-
     def play(self, score: int, golf_map: sympy.Polygon, target: sympy.geometry.Point2D, sand_traps: List[sympy.Polygon], curr_loc: sympy.geometry.Point2D, prev_loc: sympy.geometry.Point2D, prev_landing_point: sympy.geometry.Point2D, prev_admissible: bool) -> Tuple[float, float]:
         """Function which based n current game state returns the distance and angle, the shot must be played 
 
@@ -447,12 +445,6 @@ class Player:
         Returns:
             Tuple[float, float]: Return a tuple of distance and angle in radians to play the shot
         """
-
-        if self.np_map_points is None:
-            gx, gy = float(target.x), float(target.y)
-            self.goal = float(target.x), float(target.y)
-            self._initialize_map_points((gx, gy), golf_map, sand_traps)
-
         # Optimization to retry missed shots
         if self.prev_rv is not None and curr_loc == prev_loc:
             return self.prev_rv
@@ -470,6 +462,7 @@ class Player:
 
         # fixup target
         current_point = np.array(tuple(curr_loc)).astype(float)
+
         if tuple(target_point) == self.goal:
             original_dist = np.linalg.norm(
                 np.array(target_point) - current_point)
